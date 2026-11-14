@@ -201,6 +201,7 @@ background:radial-gradient(circle at 0% 0%,rgba(243,220,146,.25),transparent 50%
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{border:1px solid var(--goldline);background:#fff;border-radius:999px;padding:9px 14px;font:inherit;font-size:14px;color:var(--ink);cursor:pointer}
 .chip.on{background:linear-gradient(180deg,var(--p5),var(--p7));color:var(--gold-l);border-color:var(--gold);font-weight:700}
+.num-chip{min-width:42px;text-align:center;padding:9px 0}
 </style>
 </head>
 <body>
@@ -240,8 +241,17 @@ function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');cl
 const VAT=0.18,PATUR_CEIL=122833;
 const CH={murshe:{l:'עוסק מורשה',s:'חשבונית מס + מע״מ 18%',doc:'חשבונית מס',cls:'ch-m',acc:'חשבון העוסק המורשה'},patur:{l:'עוסק פטור',s:'קבלה, בלי מע״מ',doc:'קבלה',cls:'ch-p',acc:'חשבון העוסק הפטור'},cash:{l:'מזומן',s:'בלי מסמך ובלי מע״מ',doc:'',cls:'ch-c',acc:'מזומן'}};
 const r2=n=>Math.round(n*100)/100;
-function money(o){const a=+o.amount||0;if(o.channel==='murshe'){if(o.vatIncl){const net=r2(a/(1+VAT));return{net,vat:r2(a-net),due:a}}const vat=r2(a*VAT);return{net:a,vat,due:r2(a+vat)}}return{net:a,vat:0,due:a}}
-const dueOf=o=>money(o).due;
+const TYPES={once:'חד פעמי',series:'כמה פרסומים',monthly:'חודשי'};
+const otype=o=>o.type||'once';
+const cnt=o=>Math.max(1,parseInt(o.count)||1);
+function baseAmount(o){const a=+o.amount||0;return otype(o)==='series'&&o.priceMode==='per'?a*cnt(o):a}
+const startOf=o=>o.start||o.orderDate||today();
+function nCharges(o){return otype(o)==='monthly'?brMonths({start:startOf(o),end:o.end}):1}
+function chargesOf(o){if(otype(o)!=='monthly')return[{date:o.orderDate||'',m:(o.orderDate||'').slice(0,7)}];const n=nCharges(o),out=[];for(let k=0;k<n;k++){const d=addMonths(startOf(o),k);out.push({date:d,m:d.slice(0,7)})}return out}
+function typeLabel(o){const t=otype(o);if(t==='monthly')return'חודשי · '+cnt(o)+' פרסומים בחודש · '+ILS(o.amount)+' לחודש';if(t==='series')return cnt(o)+' פרסומים'+(o.priceMode==='per'?' · '+ILS(o.amount)+' לפרסום':'');return'פרסום חד פעמי'}
+function money(o){const a=baseAmount(o);if(o.channel==='murshe'){if(o.vatIncl){const net=r2(a/(1+VAT));return{net,vat:r2(a-net),due:a}}const vat=r2(a*VAT);return{net:a,vat,due:r2(a+vat)}}return{net:a,vat:0,due:a}}
+const dueOf=o=>r2(money(o).due*nCharges(o));
+const barterTotal=o=>hasBarter(o)?r2((+o.barter.value||0)*nCharges(o)):0;
 const chPill=o=>o.channel&&CH[o.channel]?`<span class="pill ${CH[o.channel].cls}">${CH[o.channel].l}</span>`:'<span class="pill p-mut">לא נבחר עסק</span>';
 const PAY_METHODS=['העברה בנקאית','ביט','פייבוקס','פייפאל','מזומן','אשראי','צ׳ק'];
 
@@ -407,10 +417,16 @@ const custById=id=>state.customers.find(c=>c.id===id);
 const paidOf=o=>(o.payments||[]).reduce((t,p)=>t+(+p.amount||0),0);
 const BM={part:'חלק מהתשלום',all:'כל התשלום',extra:'בנוסף לתשלום'};
 const hasBarter=o=>!!(o.barter&&o.barter.on);
-function cashDue(o){const d=dueOf(o);if(!hasBarter(o))return d;const b=o.barter;if(b.mode==='all')return 0;if(b.mode==='part')return Math.max(0,r2(d-(+b.value||0)));return d}
+function cashDue(o){const d=dueOf(o);if(!hasBarter(o))return d;const b=o.barter;if(b.mode==='all')return 0;if(b.mode==='part')return Math.max(0,r2(d-barterTotal(o)));return d}
 const balOf=o=>Math.max(0,r2(cashDue(o)-paidOf(o)));
 function payStatus(o){const a=cashDue(o),p=paidOf(o);if(hasBarter(o)&&o.barter.mode==='all')return['p-ok','ברטר'];if(a<=0&&p<=0)return['p-mut','לא נקבע סכום'];if(p>=a&&a>0)return['p-ok','שולם'];if(p>0)return['p-warn','שולם חלקית'];return['p-bad','לא שולם']}
-function pubStatus(o){if(o.publishedDate)return['p-ok','פורסם '+fd(o.publishedDate)];if(o.plannedDate&&o.plannedDate<today())return['p-bad','באיחור · '+fd(o.plannedDate)];if(o.plannedDate)return['p-warn','מתוכנן '+fd(o.plannedDate)];return['p-mut','ממתין לתאריך']}
+const pubs=o=>(o.pubs||[]).filter(Boolean);
+function pendingAds(o){const t=otype(o);if(t==='once')return o.publishedDate?0:1;if(t==='series')return Math.max(0,cnt(o)-pubs(o).length);
+  const cur=today().slice(0,7);if(startOf(o).slice(0,7)>cur||(o.end&&o.end.slice(0,7)<cur))return 0;return Math.max(0,cnt(o)-pubs(o).filter(d=>d.slice(0,7)===cur).length)}
+function pubStatus(o){const t=otype(o);
+  if(t==='series'){const n=pubs(o).length;return n>=cnt(o)?['p-ok','עלו כל '+cnt(o)+' הפרסומים']:[o.plannedDate&&o.plannedDate<today()&&!n?'p-bad':'p-warn','עלו '+n+' מתוך '+cnt(o)]}
+  if(t==='monthly'){const cur=today().slice(0,7);if(o.end&&o.end<today())return['p-mut','הסתיים '+fd(o.end)];if(startOf(o)>today())return['p-warn','מתחיל '+fd(startOf(o))];const n=pubs(o).filter(d=>d.slice(0,7)===cur).length;return n>=cnt(o)?['p-ok','החודש: עלו '+n+'/'+cnt(o)]:['p-warn','החודש: עלו '+n+' מתוך '+cnt(o)]}
+  if(o.publishedDate)return['p-ok','פורסם '+fd(o.publishedDate)];if(o.plannedDate&&o.plannedDate<today())return['p-bad','באיחור · '+fd(o.plannedDate)];if(o.plannedDate)return['p-warn','מתוכנן '+fd(o.plannedDate)];return['p-mut','ממתין לתאריך']}
 const pill=([c,t])=>`<span class="pill ${c}">${esc(t)}</span>`;
 /* ===== accumulating monthly barter (per customer) ===== */
 function addMonths(d,k){const [y,m,dd]=d.split('-').map(Number);const t=new Date(y,m-1+k,1);const last=new Date(t.getFullYear(),t.getMonth()+1,0).getDate();t.setDate(Math.min(dd,last));return ymd(t)}
@@ -418,14 +434,16 @@ function brMonths(b,at){if(!b.start)return 0;const lim=b.end&&b.end<(at||today()
 function brStat(b){const n=brMonths(b),acc=r2(n*(+b.monthly||0)),used=r2((b.uses||[]).reduce((t,u)=>t+(+u.amount||0),0));return{n,acc,used,bal:r2(acc-used),next:b.end&&addMonths(b.start,n)>b.end?'':addMonths(b.start,n)}}
 function barterCard(c){
   const bs=c.barters||[];
-  return `<div class="card"><h2>⇄ ברטר מצטבר <button class="btn sm sec" onclick="openBarter('${c.id}')">+ הוספה</button></h2>
+  const mo=state.orders.filter(o=>o.customerId===c.id&&otype(o)==='monthly'&&hasBarter(o));
+  const moHtml=mo.map(o=>{const acc=barterTotal(o),used=(o.barter.uses||[]).reduce((t,u)=>t+(+u.amount||0),0);return `<div class="brt" onclick="openOrder('${o.id}')" style="cursor:pointer"><div class="top"><div><b>${esc(o.barter.desc||'ברטר')}</b><div class="meta-s" style="margin-top:2px">מתוך "${esc(o.title||'')}" · ${ILS(o.barter.value)} בחודש · ${nCharges(o)} חודשים</div></div></div><div class="vatbox"><div class="tot"><span>יתרת זכות כרגע</span><b class="money">${ILS(r2(acc-used))}</b></div></div></div>`}).join('');
+  return `<div class="card"><h2>⇄ ברטר מצטבר <button class="btn sm sec" onclick="openBarter('${c.id}')">+ הוספה</button></h2>${moHtml}
   ${bs.length?bs.map((b,i)=>{const st=brStat(b);return `<div class="brt">
     <div class="top"><div><b>${esc(b.desc||'ברטר')}</b><div class="meta-s" style="margin-top:2px">${ILS(b.monthly)} בחודש · מ־${fd(b.start)}${b.end?' עד '+fd(b.end):''} · ${st.n} חודשים</div></div><button class="btn sm sec" onclick="openBarter('${c.id}',${i})">עריכה</button></div>
     <div class="vatbox"><div><span>הצטבר עד היום</span><b class="money">${ILS(st.acc)}</b></div>${st.used?`<div><span>נוצל</span><b class="money bad">−${ILS(st.used)}</b></div>`:''}<div class="tot"><span>יתרת זכות כרגע</span><b class="money">${ILS(st.bal)}</b></div></div>
     ${st.next?`<div class="meta-s">ב־${fd(st.next)} יתווספו עוד ${ILS(b.monthly)}</div>`:''}
     <button class="btn sec" onclick="openBarterUse('${c.id}',${i})">רישום שימוש בזכות</button>
     ${(b.uses||[]).length?`<ul class="list" style="margin-top:8px">${b.uses.map((u,j)=>`<li onclick="openBarterUse('${c.id}',${i},${j})"><div class="t"><b>${esc(u.note||'שימוש')}</b><small>${fd(u.date)}</small></div><div class="end money bad">−${ILS(u.amount)}</div></li>`).join('')}</ul>`:''}
-  </div>`}).join(''):'<div class="meta-s" style="margin-top:0">ללקוח הזה אין ברטר חודשי מצטבר. למשל: זכות בחנות של 100 ש״ח בכל חודש מתחילת הקמפיין.</div>'}</div>`;
+  </div>`}).join(''):(moHtml?'':'<div class="meta-s" style="margin-top:0">ללקוח הזה אין ברטר חודשי מצטבר. למשל: זכות בחנות של 100 ש״ח בכל חודש מתחילת הקמפיין. אם זה חלק מפרסום חודשי, אפשר להוסיף את הברטר ישר בהזמנה החודשית.</div>')}</div>`;
 }
 function openBarter(cid,i){
   const c=custById(cid);const b=i!=null?{...c.barters[i]}:{start:today(),monthly:'',uses:[]};
@@ -455,6 +473,7 @@ function openBarterUse(cid,i,j){
 }
 function barterSummaryHtml(){
   const rows=[];state.customers.forEach(c=>(c.barters||[]).forEach(b=>rows.push({c,b,st:brStat(b)})));
+  state.orders.filter(o=>otype(o)==='monthly'&&hasBarter(o)).forEach(o=>{const c=custById(o.customerId);if(!c)return;const acc=barterTotal(o),used=(o.barter.uses||[]).reduce((t,u)=>t+(+u.amount||0),0);rows.push({c,b:{desc:o.barter.desc,monthly:o.barter.value},st:{bal:r2(acc-used)}})});
   if(!rows.length)return'';
   const tot=rows.reduce((t,r)=>t+r.st.bal,0);
   return `<div class="card"><h2>⇄ יתרות ברטר מצטבר</h2><ul class="list">${rows.sort((a,b)=>b.st.bal-a.st.bal).map(r=>`<li onclick="go('customer','${r.c.id}')"><span class="num">${esc(r.c.num)}</span><div class="t"><b>${esc(r.c.name)}</b><small>${esc(r.b.desc||'')} · ${ILS(r.b.monthly)} בחודש</small></div><div class="end money ok">${ILS(r.st.bal)}</div></li>`).join('')}</ul>${leftBar('סה״כ זכויות ברטר כרגע',tot)}</div>`;
@@ -465,7 +484,7 @@ function agentCfg(){return Object.assign({},AG_DEF,state.settings.find(x=>x.id==
 const monthOf=o=>(o.orderDate||'').slice(0,7);
 const expOf=o=>(o.expenses||[]).reduce((t,e)=>t+(+e.amount||0),0);
 function agentMonth(m,orders){ // orders = all orders (optionally with one replaced while editing)
-  const a=agentCfg();const os=(orders||state.orders).filter(o=>o.viaAgent&&monthOf(o)===m);
+  const a=agentCfg();const os=[];(orders||state.orders).forEach(o=>{if(o.viaAgent)chargesOf(o).forEach(c=>{if(c.m===m)os.push(o)})});
   const base=os.reduce((t,o)=>t+money(o).net,0);
   const active=m>=a.start;
   const retainer=active?(base>a.threshold?a.high:a.low):0;
@@ -473,14 +492,14 @@ function agentMonth(m,orders){ // orders = all orders (optionally with one repla
   return{m,os,base,retainer,commission:r2(commission),total:r2(retainer+commission),high:base>a.threshold};
 }
 function profitOf(o,orders){
-  const a=agentCfg(),net=money(o).net,exp=expOf(o),bx=hasBarter(o)&&o.barter.mode==='extra'?(+o.barter.value||0):0;
+  const a=agentCfg(),one=money(o).net,ch=chargesOf(o),net=r2(one*ch.length),exp=expOf(o),bx=hasBarter(o)&&o.barter.mode==='extra'?barterTotal(o):0;
   let com=0,share=0,am=null;
-  if(o.viaAgent){am=agentMonth(monthOf(o),orders);com=r2(net*a.pct/100);share=am.base?r2(am.retainer*net/am.base):0}
-  return{net,bx,com,share,exp,left:r2(net+bx-com-share-exp),am};
+  if(o.viaAgent){com=r2(net*a.pct/100);ch.forEach(c=>{const x=agentMonth(c.m,orders);am=x;if(x.base)share+=x.retainer*one/x.base});share=r2(share)}
+  return{net,bx,com,share,exp,left:r2(net+bx-com-share-exp),am,n:ch.length};
 }
 const leftOf=o=>profitOf(o).left;
 function leftBar(label,amount,sub){return `<div class="leftbar"><div><span>${label}</span>${sub?`<small>${sub}</small>`:''}</div><b class="money">${ILS(amount)}</b></div>`}
-function custStats(cid){const os=state.orders.filter(o=>o.customerId===cid);return{os,debt:os.reduce((t,o)=>t+balOf(o),0),pend:os.filter(o=>!o.publishedDate).length,total:os.reduce((t,o)=>t+dueOf(o),0)}}
+function custStats(cid){const os=state.orders.filter(o=>o.customerId===cid);return{os,debt:os.reduce((t,o)=>t+balOf(o),0),pend:os.reduce((t,o)=>t+pendingAds(o),0),total:os.reduce((t,o)=>t+dueOf(o),0)}}
 const nextNum=()=>state.customers.reduce((m,c)=>Math.max(m,+c.num||0),0)+1;
 
 /* ===== navigation ===== */
@@ -512,6 +531,8 @@ function openCustomerForm(id){
   <div class="row"><div><label>ח.פ / ע.מ (לחשבונית)</label><input id="fTax" inputmode="numeric" value="${esc(c.taxId||'')}"></div>
   <div><label>עיר / כתובת</label><input id="fAddr" value="${esc(c.address||'')}"></div></div>
   <label>דרך איזה עסק הלקוח בדרך כלל משלם</label><select id="fCh"><option value="">לא קבוע</option>${Object.entries(CH).map(([k,v])=>`<option value="${k}"${c.defCh===k?' selected':''}>${v.l} – ${v.s}</option>`).join('')}</select>
+  <label>סוג הפרסום הקבוע של הלקוח</label><select id="fType"><option value="">לא קבוע</option>${Object.entries(TYPES).map(([k,v])=>`<option value="${k}"${c.defType===k?' selected':''}>${v}</option>`).join('')}</select>
+  <div class="row"><div><label>כמה פרסומים (בחודש)</label><input id="fCount" type="number" inputmode="numeric" value="${c.defCount||''}" placeholder="1–5"></div><div><label>מחיר קבוע (₪)</label><input id="fPrice" type="number" inputmode="decimal" value="${c.defPrice||''}" placeholder="לפרסום / לחודש"></div></div>
   <label>תחום העסק</label><input id="fField" value="${esc(c.field||'')}" placeholder="למשל: מסעדה, קוסמטיקה">
   <label>הערות</label><textarea id="fNotes" rows="3">${esc(c.notes||'')}</textarea>
   <button class="btn" id="fSave">שמירה</button>
@@ -521,7 +542,7 @@ function openCustomerForm(id){
     const name=$('#fName').value.trim();if(!name){toast('צריך להזין שם');return}
     const num=parseInt($('#fNum').value)||nextNum();
     if(state.customers.some(x=>x.id!==c.id&&+x.num===num)){toast('מספר לקוח '+num+' כבר תפוס');return}
-    const saved=await saveDoc('customers',{...c,num,name,contact:$('#fContact').value.trim(),phone:$('#fPhone').value.trim(),phone2:$('#fPhone2').value.trim(),email:$('#fEmail').value.trim(),taxId:$('#fTax').value.trim(),address:$('#fAddr').value.trim(),field:$('#fField').value.trim(),defCh:$('#fCh').value,notes:$('#fNotes').value.trim(),createdAt:c.createdAt||Date.now()});
+    const saved=await saveDoc('customers',{...c,num,name,contact:$('#fContact').value.trim(),phone:$('#fPhone').value.trim(),phone2:$('#fPhone2').value.trim(),email:$('#fEmail').value.trim(),taxId:$('#fTax').value.trim(),address:$('#fAddr').value.trim(),field:$('#fField').value.trim(),defCh:$('#fCh').value,defType:$('#fType').value,defCount:parseInt($('#fCount').value)||'',defPrice:parseFloat($('#fPrice').value)||'',notes:$('#fNotes').value.trim(),createdAt:c.createdAt||Date.now()});
     closeSheet();toast('הלקוח נשמר ✓');if(!id)go('customer',saved.id);
   };
   if(id)$('#fDel').onclick=()=>{const n=state.orders.filter(o=>o.customerId===id).length;if(n){toast('ללקוח יש '+n+' הזמנות – יש למחוק אותן קודם');return}confirmBox('למחוק את '+c.name+'?',()=>{delDoc('customers',id);go(prevTab)})};
@@ -530,17 +551,17 @@ function openCustomerForm(id){
 /* ===== order form ===== */
 let editing=null;
 function openOrder(id,cid){
-  const o=id?JSON.parse(JSON.stringify(state.orders.find(x=>x.id===id))):{customerId:cid,channel:(custById(cid)||{}).defCh||'',orderDate:today(),payments:[],invoice:{}};
+  const o=id?JSON.parse(JSON.stringify(state.orders.find(x=>x.id===id))):(()=>{const c=custById(cid)||{};const t=c.defType||'once';return{customerId:cid,channel:c.defCh||'',type:t,count:c.defCount||(t==='monthly'?4:t==='series'?3:1),amount:c.defPrice||'',priceMode:t==='series'?'per':undefined,start:t==='monthly'?today():undefined,orderDate:today(),payments:[],invoice:{}}})();
   o.invoice=o.invoice||{};o.payments=o.payments||[];o.expenses=o.expenses||[];
   editing=o;renderOrderForm();
 }
 function collectOrder(){
   const o=editing;if(!o||!$('#oTitle'))return;
   o.customerId=$('#oCust').value;o.orderDate=$('#oDate').value;o.title=$('#oTitle').value.trim();o.details=$('#oDetails').value.trim();
-  o.amount=parseFloat($('#oAmount').value)||0;o.vatIncl=!!($('#oVatIncl')&&$('#oVatIncl').checked);o.plannedDate=$('#oPlanned').value;o.publishedDate=$('#oPublished').value;o.notes=$('#oNotes').value.trim();
+  o.amount=parseFloat($('#oAmount').value)||0;if($('#oCount'))o.count=Math.max(1,parseInt($('#oCount').value)||1);if($('#oStart'))o.start=$('#oStart').value;if($('#oEnd'))o.end=$('#oEnd').value;(o.pubs||[]).forEach((d,k)=>{if($('#pb'+k))o.pubs[k]=$('#pb'+k).value});o.vatIncl=!!($('#oVatIncl')&&$('#oVatIncl').checked);o.plannedDate=$('#oPlanned')?$('#oPlanned').value:o.plannedDate;if($('#oPublished'))o.publishedDate=$('#oPublished').value;o.notes=$('#oNotes').value.trim();
   if($('#iIssued'))o.invoice={...o.invoice,issued:$('#iIssued').checked,date:$('#iDate').value,number:$('#iNum').value.trim(),link:$('#iLink').value.trim()};
   o.viaAgent=!!($('#oAgent')&&$('#oAgent').checked);
-  if($('#bOn')){o.barter=Object.assign({},o.barter,{on:$('#bOn').checked});if($('#bDesc')){o.barter.desc=$('#bDesc').value.trim();o.barter.value=parseFloat($('#bVal').value)||0;o.barter.got=$('#bGot').checked;o.barter.gotDate=$('#bGotD').value}}
+  if($('#bOn')){o.barter=Object.assign({},o.barter,{on:$('#bOn').checked});if($('#bDesc')){o.barter.desc=$('#bDesc').value.trim();o.barter.value=parseFloat($('#bVal').value)||0;if($('#bGot')){o.barter.got=$('#bGot').checked;o.barter.gotDate=$('#bGotD').value}(o.barter.uses||[]).forEach((u,k)=>{if($('#bu'+k+'a')){u.amount=parseFloat($('#bu'+k+'a').value)||0;u.date=$('#bu'+k+'d').value;u.note=$('#bu'+k+'n').value.trim()}})}}
   (o.expenses||[]).forEach((x,i)=>{x.desc=$('#xD'+i).value.trim();x.amount=parseFloat($('#xA'+i).value)||0;x.date=$('#xT'+i).value});
   o.payments.forEach((p,i)=>{p.amount=parseFloat($('#pA'+i).value)||0;p.date=$('#pD'+i).value;p.method=$('#pM'+i).value;p.account=$('#pAc'+i).value.trim();p.ref=$('#pR'+i).value.trim();p.note=$('#pN'+i).value.trim()});
 }
@@ -557,12 +578,23 @@ function renderOrderForm(){
   <div class="sec-title">הפרסום</div>
   <label>מה הפרסום *</label><input id="oTitle" value="${esc(o.title||'')}" placeholder="למשל: סטטוס מבצע חנוכה">
   <label>פירוט</label><textarea id="oDetails" rows="2" placeholder="כמה סטטוסים, נוסח, קישור, דגשים…">${esc(o.details||'')}</textarea>
+  <label>סוג הפרסום</label>
+  <div class="chips">${Object.entries(TYPES).map(([k,l])=>`<button type="button" class="chip${otype(o)===k?' on':''}" onclick="setType('${k}')">${l}</button>`).join('')}</div>
+  ${otype(o)!=='once'?`<label>${otype(o)==='monthly'?'כמה פרסומים בחודש':'כמה פרסומים'}</label>
+  <div class="chips">${[1,2,3,4,5,6].map(n=>`<button type="button" class="chip num-chip${cnt(o)===n?' on':''}" onclick="setCount(${n})">${n}</button>`).join('')}<input id="oCount" type="number" inputmode="numeric" value="${cnt(o)}" style="width:80px;padding:8px 10px" onchange="setCount(this.value)"></div>`:''}
+  ${otype(o)==='series'?`<label>המחיר הוא</label><div class="chips"><button type="button" class="chip${o.priceMode==='per'?' on':''}" onclick="setPM('per')">לכל פרסום</button><button type="button" class="chip${o.priceMode!=='per'?' on':''}" onclick="setPM('total')">כולל לכל הפרסומים</button></div>`:''}
   <div class="row"><div><label>תאריך ההזמנה</label><input type="date" id="oDate" value="${o.orderDate||''}"></div>
-  <div><label>${o.channel==='murshe'?(o.vatIncl?'סכום שסוכם כולל מע״מ (₪)':'סכום שסוכם לפני מע״מ (₪)'):'סכום שסוכם (₪)'}</label><input type="number" inputmode="decimal" id="oAmount" value="${o.amount||''}" oninput="vatLive()"></div></div>
+  <div><label>${otype(o)==='monthly'?'מחיר לחודש':otype(o)==='series'?(o.priceMode==='per'?'מחיר לכל פרסום':'מחיר כולל'):'מחיר הפרסום'}${o.channel==='murshe'?(o.vatIncl?' כולל מע״מ':' לפני מע״מ'):''} (₪)</label><input type="number" inputmode="decimal" id="oAmount" value="${o.amount||''}" oninput="vatLive()"></div></div>
+  ${otype(o)==='monthly'?`<div class="row"><div><label>ממתי מתחיל החודשי</label><input type="date" id="oStart" value="${o.start||o.orderDate||today()}" onchange="chChange(editing.channel)"></div><div><label>עד מתי (לא חובה)</label><input type="date" id="oEnd" value="${o.end||''}" onchange="chChange(editing.channel)"></div></div>
+  <div class="note-box" style="background:#f1ecf8;border-color:#ddd0ee;color:var(--p6)">עד היום ${nCharges(o)} חודשים · סה״כ ${ILS(dueOf(o))}${o.channel==='murshe'?' כולל מע״מ':''}. בכל חודש, באותו תאריך, מתווסף עוד ${ILS(money(o).due)} לתשלום.</div>`:''}
+  ${otype(o)==='series'&&o.priceMode==='per'&&o.amount?`<div class="meta-s">סה״כ ${cnt(o)} × ${ILS(o.amount)} = ${ILS(baseAmount(o))}${o.channel==='murshe'&&!o.vatIncl?' לפני מע״מ':''}</div>`:''}
   ${o.channel==='murshe'?`<div class="switch"><span>הסכום שסוכם כבר כולל מע״מ</span><input type="checkbox" id="oVatIncl" ${o.vatIncl?'checked':''} onchange="chChange('murshe')"></div><div class="vatbox" id="vatBox"></div>`:''}
-  <div class="row"><div><label>מתי הפרסום אמור לעלות</label><input type="date" id="oPlanned" value="${o.plannedDate||''}"></div>
+  ${otype(o)==='once'?`<div class="row"><div><label>מתי הפרסום אמור לעלות</label><input type="date" id="oPlanned" value="${o.plannedDate||''}"></div>
   <div><label>מתי הפרסום עלה בפועל</label><input type="date" id="oPublished" value="${o.publishedDate||''}"></div></div>
-  <button class="btn sm sec" type="button" style="margin-top:8px" onclick="$('#oPublished').value=today()">עלה היום ✓</button>
+  <button class="btn sm sec" type="button" style="margin-top:8px" onclick="$('#oPublished').value=today()">עלה היום ✓</button>`:`<label>${otype(o)==='monthly'?'מתי הפרסום הבא אמור לעלות':'מתי הפרסום הראשון אמור לעלות'}</label><input type="date" id="oPlanned" value="${o.plannedDate||''}">
+  <label>פרסומים שעלו (${otype(o)==='monthly'?'החודש '+pubs(o).filter(d=>d.slice(0,7)===today().slice(0,7)).length+' מתוך '+cnt(o):pubs(o).length+' מתוך '+cnt(o)})</label>
+  ${(o.pubs||[]).map((d,k)=>`<div class="row" style="align-items:center;margin-top:6px"><div><input type="date" id="pb${k}" value="${d||''}"></div><div style="flex:0 0 auto"><button class="btn sm danger" type="button" onclick="removePub(${k})">הסרה</button></div></div>`).join('')}
+  <button class="btn sm sec" type="button" style="margin-top:8px" onclick="addPub()">✓ פרסום עלה היום</button>`}
   <label>תמונת הקמפיין</label>${imgBox('campaign',o.campaignImg,'הוספת תמונת קמפיין')}
   <div class="switch agent-sw"><span>✦ הפרסום הגיע דרך ${esc(agentCfg().name)}</span><input type="checkbox" id="oAgent" ${o.viaAgent?'checked':''} onchange="chChange(editing.channel)"></div>
 
@@ -577,8 +609,10 @@ function renderOrderForm(){
   <div class="switch agent-sw"><span>⇄ יש ברטר בהזמנה הזו</span><input type="checkbox" id="bOn" ${bt.on?'checked':''} onchange="chChange(editing.channel)"></div>
   ${bt.on?`<div class="pay">
     <label>הברטר הוא</label><div class="chips">${Object.entries(BM).map(([k,l])=>`<button type="button" class="chip${(bt.mode||'part')===k?' on':''}" onclick="setBM('${k}')">${l}</button>`).join('')}</div>
-    <div class="row"><div style="flex:2"><label>מה מקבלים</label><input id="bDesc" value="${esc(bt.desc||'')}" placeholder="זכות בחנות, מוצר, שירות…"></div><div><label>שווי (₪)</label><input id="bVal" type="number" inputmode="decimal" value="${bt.value||''}" oninput="refreshProfit()" onchange="chChange(editing.channel)"></div></div>
-    <div class="row" style="align-items:flex-end"><div class="switch" style="margin-top:12px"><span>הברטר התקבל</span><input type="checkbox" id="bGot" ${bt.got?'checked':''}></div><div><label>מתי</label><input id="bGotD" type="date" value="${bt.gotDate||''}"></div></div>
+    <div class="row"><div style="flex:2"><label>מה מקבלים</label><input id="bDesc" value="${esc(bt.desc||'')}" placeholder="זכות בחנות, מוצר, שירות…"></div><div><label>${otype(o)==='monthly'?'שווי בכל חודש':'שווי'} (₪)</label><input id="bVal" type="number" inputmode="decimal" value="${bt.value||''}" oninput="refreshProfit()" onchange="chChange(editing.channel)"></div></div>
+    ${otype(o)==='monthly'?(()=>{const acc=barterTotal(o),used=(bt.uses||[]).reduce((t,u)=>t+(+u.amount||0),0);return `<div class="vatbox"><div><span>הצטבר עד היום (${nCharges(o)} חודשים)</span><b class="money">${ILS(acc)}</b></div>${used?`<div><span>נוצל</span><b class="money bad">−${ILS(used)}</b></div>`:''}<div class="tot"><span>יתרת זכות כרגע</span><b class="money">${ILS(r2(acc-used))}</b></div></div>
+    ${(bt.uses||[]).map((u,k)=>`<div class="row" style="align-items:flex-end"><div><label>נוצל (₪)</label><input id="bu${k}a" type="number" inputmode="decimal" value="${u.amount||''}"></div><div><label>תאריך</label><input id="bu${k}d" type="date" value="${u.date||''}"></div><div style="flex:0 0 auto"><button class="btn sm danger" type="button" onclick="removeBUse(${k})">×</button></div></div><input id="bu${k}n" value="${esc(u.note||'')}" placeholder="על מה נוצל" style="margin-top:6px">`).join('')}
+    <button class="btn sm sec" type="button" style="margin-top:10px" onclick="addBUse()">+ רישום שימוש בזכות</button>`})():`<div class="row" style="align-items:flex-end"><div class="switch" style="margin-top:12px"><span>הברטר התקבל</span><input type="checkbox" id="bGot" ${bt.got?'checked':''}></div><div><label>מתי</label><input id="bGotD" type="date" value="${bt.gotDate||''}"></div></div>`}
     <div class="meta-s">${(bt.mode||'part')==='extra'?'הברטר בא בנוסף לכסף – הסכום לתשלום לא משתנה, והשווי נוסף למה שנשאר לנחמי.':(bt.mode==='all'?'כל ההזמנה משולמת בברטר – אין סכום לתשלום בכסף.':'שווי הברטר יורד מהסכום שהלקוח צריך לשלם בכסף.')}</div></div>`:''}
 
   <div class="sec-title">תשלומים</div>
@@ -614,7 +648,7 @@ function profitHtml(o){
   const others=state.orders.filter(x=>x.id!==o.id).concat([o]);
   const p=profitOf(o,others),a=agentCfg();
   return `<div class="vatbox profit">
-    <div><span>סכום הפרסום${o.channel==='murshe'?' (לפני מע״מ)':''}</span><b class="money">${ILS(p.net)}</b></div>
+    <div><span>${otype(o)==='monthly'?'סכום עד היום ('+p.n+' חודשים)':'סכום הפרסום'}${o.channel==='murshe'?' (לפני מע״מ)':''}</span><b class="money">${ILS(p.net)}</b></div>
     ${o.viaAgent?`<div><span>עמלת ${esc(a.name)} ${a.pct}%</span><b class="money bad">−${ILS(p.com)}</b></div>
     <div><span>חלק מהרנטה החודשית<small>${p.am&&p.am.base?`${ILS(p.am.retainer)} בחודש ${p.am.m.split('-').reverse().join('/')} · מתחלק לפי ${p.am.os.length} פרסומים של ${ILS(p.am.base)}`:''}${p.am&&p.am.retainer===0?' · לפני תחילת העבודה עם הסוכנת':''}</small></span><b class="money bad">−${ILS(p.share)}</b></div>`:''}
     ${p.bx?`<div><span>ברטר בנוסף לתשלום</span><b class="money ok">+${ILS(p.bx)}</b></div>`:''}
@@ -625,9 +659,17 @@ function profitHtml(o){
 function refreshProfit(){if(!editing||!$('#profitBox'))return;collectOrder();$('#profitBox').innerHTML=profitHtml(editing)}
 function addExp(){collectOrder();editing.expenses.push({desc:'',amount:'',date:today()});const y=$('#sheet').scrollTop;renderOrderForm();$('#sheet').scrollTop=y+120}
 function removeExp(i){collectOrder();editing.expenses.splice(i,1);const y=$('#sheet').scrollTop;renderOrderForm();$('#sheet').scrollTop=y}
-function setBM(k){collectOrder();editing.barter=Object.assign({},editing.barter,{mode:k});if(k==='all'&&!(+editing.barter.value))editing.barter.value=dueOf(editing);const y=$('#sheet').scrollTop;renderOrderForm();$('#sheet').scrollTop=y}
+function rer(){const y=$('#sheet').scrollTop;renderOrderForm();$('#sheet').scrollTop=y}
+function setType(k){collectOrder();editing.type=k;if(k==='monthly'&&!editing.start)editing.start=editing.orderDate||today();if(k!=='once'&&!editing.count)editing.count=k==='monthly'?4:3;rer()}
+function setCount(n){collectOrder();editing.count=Math.max(1,parseInt(n)||1);rer()}
+function setPM(k){collectOrder();editing.priceMode=k;rer()}
+function addPub(){collectOrder();editing.pubs=[...(editing.pubs||[]),today()];rer()}
+function removePub(k){collectOrder();editing.pubs.splice(k,1);rer()}
+function addBUse(){collectOrder();const b=editing.barter;b.uses=[...(b.uses||[]),{amount:'',date:today(),note:''}];rer()}
+function removeBUse(k){collectOrder();editing.barter.uses.splice(k,1);rer()}
+function setBM(k){collectOrder();editing.barter=Object.assign({},editing.barter,{mode:k});if(k==='all'&&!(+editing.barter.value))editing.barter.value=money(editing).due;const y=$('#sheet').scrollTop;renderOrderForm();$('#sheet').scrollTop=y}
 function chChange(k){collectOrder();editing.channel=k;const y=$('#sheet').scrollTop;renderOrderForm();$('#sheet').scrollTop=y}
-function vatLive(){const b=$('#vatBox');if(!b)return;const a=parseFloat($('#oAmount').value)||0;const m=money({channel:'murshe',amount:a,vatIncl:$('#oVatIncl').checked});b.innerHTML=`<div><span>לפני מע״מ</span><b class="money">${ILS(m.net)}</b></div><div><span>מע״מ 18%</span><b class="money">${ILS(m.vat)}</b></div><div class="tot"><span>סה״כ לתשלום</span><b class="money">${ILS(m.due)}</b></div>`}
+function vatLive(){const b=$('#vatBox');if(!b)return;const a=parseFloat($('#oAmount').value)||0;const m=money({channel:'murshe',amount:a,vatIncl:$('#oVatIncl').checked,type:editing.type,count:$('#oCount')?$('#oCount').value:editing.count,priceMode:editing.priceMode});b.innerHTML=`<div><span>לפני מע״מ</span><b class="money">${ILS(m.net)}</b></div><div><span>מע״מ 18%</span><b class="money">${ILS(m.vat)}</b></div><div class="tot"><span>סה״כ לתשלום</span><b class="money">${ILS(m.due)}</b></div>`}
 function removePay(i){collectOrder();editing.payments.splice(i,1);const y=$('#sheet').scrollTop;renderOrderForm();$('#sheet').scrollTop=y}
 function clearImg(key){collectOrder();if(key==='campaign')editing.campaignImg=null;else editing.payments[+key.slice(3)].img=null;const y=$('#sheet').scrollTop;renderOrderForm();$('#sheet').scrollTop=y}
 async function pickImg(inp){
@@ -641,7 +683,7 @@ async function pickImg(inp){
 function orderCard(o,showCust){
   const c=custById(o.customerId)||{};const bal=balOf(o);
   return `<div class="ord" onclick="openOrder('${o.id}')"><div class="top"><div><b>${esc(o.title||'ללא כותרת')}</b>${showCust?`<div class="meta">${esc(c.num)} · ${esc(c.name||'')}</div>`:''}</div><div style="text-align:left" class="amt">${M(dueOf(o))}${o.channel==='murshe'?'<div class="meta" style="font-family:var(--fb);font-weight:400">כולל מע״מ</div>':''}${bal>0&&paidOf(o)>0?`<div class="meta bad">יתרה ${ILS(bal)}</div>`:''}</div></div>
-  <div class="meta">הוזמן ${fd(o.orderDate)}${o.channel==='cash'?'':(o.invoice&&o.invoice.issued?' · '+(CH[o.channel]?CH[o.channel].doc:'מסמך')+' '+(o.invoice.number?'#'+esc(o.invoice.number):'')+(o.invoice.date?' '+fd(o.invoice.date):''):' · עוד לא הוצא'+(CH[o.channel]?'ה '+CH[o.channel].doc:' מסמך'))}</div>
+  <div class="meta">${esc(typeLabel(o))} · הוזמן ${fd(o.orderDate)}${o.channel==='cash'?'':(o.invoice&&o.invoice.issued?' · '+(CH[o.channel]?CH[o.channel].doc:'מסמך')+' '+(o.invoice.number?'#'+esc(o.invoice.number):'')+(o.invoice.date?' '+fd(o.invoice.date):''):' · עוד לא הוצא'+(CH[o.channel]?'ה '+CH[o.channel].doc:' מסמך'))}</div>
   <div class="pills">${chPill(o)}${o.viaAgent?'<span class="pill p-agent">✦ סוכנת</span>':''}${hasBarter(o)?'<span class="pill p-barter">⇄ ברטר '+ILS(o.barter.value)+'</span>':''}${pill(pubStatus(o))}${pill(payStatus(o))}<span class="pill p-left">נשאר ${ILS(leftOf(o))}</span></div></div>`;
 }
 function vCustomers(){
@@ -649,26 +691,28 @@ function vCustomers(){
   const cs=state.customers.filter(c=>!q||String(c.num)===q||(c.name||'').toLowerCase().includes(q)||(c.contact||'').toLowerCase().includes(q)||(c.phone||'').replace(/\D/g,'').includes(q.replace(/\D/g,'')||'§')).sort((a,b)=>(+a.num||0)-(+b.num||0));
   return `<input class="search" id="custQ" placeholder="חיפוש לפי שם, מספר לקוח או טלפון" value="${esc(custQ)}">
   <button class="btn gold" onclick="openCustomerForm()">✦ לקוח חדש</button>
-  <div class="card"><h2>${state.customers.length} לקוחות</h2><ul class="list">${cs.length?cs.map(c=>{const s=custStats(c.id);return`<li onclick="go('customer','${c.id}')"><span class="num">${esc(c.num)}</span><div class="t"><b>${esc(c.name)}</b><small>${esc([c.contact,c.phone].filter(Boolean).join(' · '))}</small></div><div class="end">${s.debt>0?`<span class="pill p-bad">חוב ${ILS(s.debt)}</span>`:''}${s.pend?`<div style="margin-top:4px"><span class="pill p-warn">${s.pend} לפרסום</span></div>`:''}${(c.barters||[]).length?`<div style="margin-top:4px"><span class="pill p-barter">⇄ ${ILS((c.barters||[]).reduce((t,b)=>t+brStat(b).bal,0))}</span></div>`:''}</div></li>`}).join(''):`<div class="empty">${q?'לא נמצא לקוח':'עוד אין לקוחות – הוסיפו את הראשון'}</div>`}</ul></div>`;
+  <div class="card"><h2>${state.customers.length} לקוחות</h2><ul class="list">${cs.length?cs.map(c=>{const s=custStats(c.id);return`<li onclick="go('customer','${c.id}')"><span class="num">${esc(c.num)}</span><div class="t"><b>${esc(c.name)}</b><small>${esc([c.contact,c.phone].filter(Boolean).join(' · '))}</small></div><div class="end">${s.debt>0?`<span class="pill p-bad">חוב ${ILS(s.debt)}</span>`:''}${s.pend?`<div style="margin-top:4px"><span class="pill p-warn">${s.pend} לפרסום</span></div>`:''}${(()=>{const mo=state.orders.filter(o=>o.customerId===c.id&&otype(o)==='monthly'&&hasBarter(o));if(!(c.barters||[]).length&&!mo.length)return'';const v=(c.barters||[]).reduce((t,b)=>t+brStat(b).bal,0)+mo.reduce((t,o)=>t+barterTotal(o)-(o.barter.uses||[]).reduce((a,u)=>a+(+u.amount||0),0),0);return `<div style="margin-top:4px"><span class="pill p-barter">⇄ ${ILS(v)}</span></div>`})()}${state.orders.some(o=>o.customerId===c.id&&otype(o)==='monthly'&&!(o.end&&o.end<today()))?'<div style="margin-top:4px"><span class="pill p-brand">חודשי</span></div>':''}</div></li>`}).join(''):`<div class="empty">${q?'לא נמצא לקוח':'עוד אין לקוחות – הוסיפו את הראשון'}</div>`}</ul></div>`;
 }
 function vCustomer(){
   const c=custById(curCust);if(!c)return'<div class="empty">הלקוח לא נמצא</div>';
   const s=custStats(c.id);const os=[...s.os].sort((a,b)=>(b.orderDate||'').localeCompare(a.orderDate||''));
   const ph=(c.phone||'').replace(/[^\d+]/g,'');const wa=ph?'https://wa.me/'+(ph.startsWith('0')?'972'+ph.slice(1):ph.replace('+','')):'';
   return `<div class="card"><div style="display:flex;gap:12px;align-items:center"><span class="num big">${esc(c.num)}</span><div style="flex:1;min-width:0"><div class="cname">${esc(c.name)}</div><div style="color:var(--muted);font-size:14px">${esc(c.field||'')}</div></div><button class="btn sm sec" onclick="openCustomerForm('${c.id}')">עריכה</button></div>
-  <dl class="info">${[['איש קשר',c.contact],['טלפון',c.phone],['טלפון נוסף',c.phone2],['מייל',c.email],['ח.פ / ע.מ',c.taxId],['כתובת',c.address],['הערות',c.notes]].filter(x=>x[1]).map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+  <dl class="info">${[['סוג פרסום',c.defType?TYPES[c.defType]+(c.defCount?' · '+c.defCount+(c.defType==='monthly'?' בחודש':' פרסומים'):'')+(c.defPrice?' · '+ILS(c.defPrice):''):''],['איש קשר',c.contact],['טלפון',c.phone],['טלפון נוסף',c.phone2],['מייל',c.email],['ח.פ / ע.מ',c.taxId],['כתובת',c.address],['הערות',c.notes]].filter(x=>x[1]).map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
   ${ph||c.email?`<div class="contact">${ph?`<a href="tel:${esc(ph)}">📞 התקשרות</a><a href="${esc(wa)}" target="_blank" rel="noopener">💬 וואטסאפ</a>`:''}${c.email?`<a href="mailto:${esc(c.email)}">✉️ מייל</a>`:''}</div>`:''}</div>
   <div class="kpis"><div class="kpi"><div class="l">סה״כ הזמנות</div><div class="v">${M(s.total)}</div></div><div class="kpi"><div class="l">חוב פתוח</div><div class="v ${s.debt>0?'bad':'ok'}">${M(s.debt)}</div></div></div>
   <button class="btn gold" onclick="openOrder(null,'${c.id}')">✦ הזמנת פרסום חדשה</button>
   <div class="card"><h2>הזמנות (${os.length})</h2>${os.length?`<div class="tbl-wrap"><table><tr><th>תאריך</th><th>הפרסום</th><th>סכום</th><th>עולה</th><th>עלה</th><th>תמונה</th><th>עסק</th><th>מסמך</th><th>תשלום</th><th>יתרה</th><th>סוכנת</th><th>הוצאות</th><th>נשאר לנחמי</th></tr>
-  ${os.map(o=>{const bal=balOf(o),pf=profitOf(o);return`<tr class="click" onclick="openOrder('${o.id}')"><td>${fd(o.orderDate)}</td><td style="white-space:normal;min-width:120px">${esc(o.title)}</td><td>${M(dueOf(o))}</td><td>${o.plannedDate?(!o.publishedDate&&o.plannedDate<today()?`<span class="over">${fd(o.plannedDate)}</span>`:fd(o.plannedDate)):'—'}</td><td>${o.publishedDate?`<span class="ok">✓ ${fd(o.publishedDate)}</span>`:'—'}</td><td>${o.campaignImg&&imgSrc(o.campaignImg)?`<img class="thumb" src="${esc(imgSrc(o.campaignImg))}" alt="">`:'—'}</td><td>${chPill(o)}</td><td>${o.channel==='cash'?'—':(o.invoice&&o.invoice.issued?'✓ '+fd(o.invoice.date):'<span class="bad">לא</span>')}</td><td>${pill(payStatus(o))}</td><td class="${bal>0?'bad':''}">${bal>0?M(bal):'—'}</td><td>${o.viaAgent?'<span class="pill p-agent">✦</span> '+M(pf.com+pf.share):'—'}</td><td>${pf.exp?M(pf.exp):'—'}</td><td><b class="money ok">${ILS(pf.left)}</b></td></tr>`}).join('')}</table></div>`:'<div class="empty">עוד אין הזמנות ללקוח הזה</div>'}</div>
+  ${os.map(o=>{const bal=balOf(o),pf=profitOf(o);return`<tr class="click" onclick="openOrder('${o.id}')"><td>${fd(o.orderDate)}</td><td style="white-space:normal;min-width:120px">${esc(o.title)}<div class="meta-s" style="margin-top:2px">${esc(typeLabel(o))}</div></td><td>${M(dueOf(o))}</td><td>${o.plannedDate?(!o.publishedDate&&o.plannedDate<today()?`<span class="over">${fd(o.plannedDate)}</span>`:fd(o.plannedDate)):'—'}</td><td>${o.publishedDate?`<span class="ok">✓ ${fd(o.publishedDate)}</span>`:'—'}</td><td>${o.campaignImg&&imgSrc(o.campaignImg)?`<img class="thumb" src="${esc(imgSrc(o.campaignImg))}" alt="">`:'—'}</td><td>${chPill(o)}</td><td>${o.channel==='cash'?'—':(o.invoice&&o.invoice.issued?'✓ '+fd(o.invoice.date):'<span class="bad">לא</span>')}</td><td>${pill(payStatus(o))}</td><td class="${bal>0?'bad':''}">${bal>0?M(bal):'—'}</td><td>${o.viaAgent?'<span class="pill p-agent">✦</span> '+M(pf.com+pf.share):'—'}</td><td>${pf.exp?M(pf.exp):'—'}</td><td><b class="money ok">${ILS(pf.left)}</b></td></tr>`}).join('')}</table></div>`:'<div class="empty">עוד אין הזמנות ללקוח הזה</div>'}</div>
   ${barterCard(c)}
   ${os.length?leftBar('סה״כ נשאר לנחמי מהלקוח',os.reduce((t,o)=>t+leftOf(o),0),'אחרי סוכנת והוצאות, בלי מע״מ'):''}`;
 }
 function vPending(){
-  const os=state.orders.filter(o=>!o.publishedDate).sort((a,b)=>(a.plannedDate||'9999').localeCompare(b.plannedDate||'9999'));
+  const os=state.orders.filter(o=>pendingAds(o)>0).sort((a,b)=>(a.plannedDate||'9999').localeCompare(b.plannedDate||'9999'));
   const t=today(),late=os.filter(o=>o.plannedDate&&o.plannedDate<t),tod=os.filter(o=>o.plannedDate===t),fut=os.filter(o=>o.plannedDate&&o.plannedDate>t),none=os.filter(o=>!o.plannedDate);
   const grp=(h,a)=>a.length?`<div class="card"><h2>${h} <span class="pill p-brand">${a.length}</span></h2>${a.map(o=>orderCard(o,true)).join('')}</div>`:'';
+  const mon=os.filter(o=>otype(o)==='monthly');const rest=x=>x.filter(o=>otype(o)!=='monthly');
+  return os.length?grp('⚠️ באיחור',rest(late))+grp('היום',rest(tod))+grp('בהמשך',rest(fut))+grp('בלי תאריך',rest(none))+grp('לקוחות חודשיים – נשארו פרסומים החודש',mon):'<div class="card"><div class="empty">אין פרסומים שממתינים לעלות 🎉</div></div>';
   return os.length?grp('⚠️ באיחור',late)+grp('היום',tod)+grp('בהמשך',fut)+grp('בלי תאריך',none):'<div class="card"><div class="empty">אין פרסומים שממתינים לעלות 🎉</div></div>';
 }
 function vDebts(){
@@ -706,23 +750,25 @@ function agentProfitHtml(from,to,label){
   const a=agentCfg(),cur=today().slice(0,7);
   const months=monthsBetween(from,to).filter(m=>m<=cur);
   const am=months.map(m=>agentMonth(m));
-  const os=state.orders.filter(o=>o.orderDate&&o.orderDate>=from&&o.orderDate<=to);
-  const net=os.reduce((t,o)=>t+money(o).net,0),exp=os.reduce((t,o)=>t+expOf(o),0);
+  let net=0,exp=0,bx=0;
+  state.orders.forEach(o=>{const one=money(o).net,bv=hasBarter(o)&&o.barter.mode==='extra'?(+o.barter.value||0):0;chargesOf(o).forEach(c=>{if(c.date&&c.date>=from&&c.date<=to){net+=one;bx+=bv}});(o.expenses||[]).forEach(e=>{const d=e.date||o.orderDate||'';if(d>=from&&d<=to)exp+=(+e.amount||0)})});
+  net=r2(net);exp=r2(exp);
   const agTot=am.reduce((t,x)=>t+x.total,0);
   const idle=am.filter(x=>x.retainer&&!x.os.length).reduce((t,x)=>t+x.retainer,0);
-  const left=r2(net-agTot-exp);
+  const left=r2(net+bx-agTot-exp);
   return `<div class="card"><h2>✦ ${esc(a.name)} <button class="btn sm sec" onclick="openAgentSettings()">הגדרות</button></h2>
     <div class="meta-s" style="margin-top:0">רנטה ${ILS(a.low)} בחודש, ו־${ILS(a.high)} בחודש שבו הפרסומים דרכה עוברים ${ILS(a.threshold)} · ועוד ${a.pct}% מכל פרסום דרכה · לפי תאריך ההזמנה, לפני מע״מ</div>
     ${am.length?`<div class="tbl-wrap"><table style="min-width:480px"><tr><th>חודש</th><th>פרסומים דרכה</th><th>סכום</th><th>רנטה</th><th>${a.pct}%</th><th>מגיע לה</th></tr>${am.map(x=>`<tr><td>${x.m.split('-').reverse().join('/')}</td><td>${x.os.length}</td><td>${M(x.base)}</td><td>${M(x.retainer)}${x.high?' <span class="pill p-warn">מעל '+ILS(a.threshold)+'</span>':''}</td><td>${M(x.commission)}</td><td><b class="money">${ILS(x.total)}</b></td></tr>`).join('')}</table></div>`:'<div class="empty">אין נתונים לתקופה</div>'}
     ${leftBar('סה״כ מגיע ל'+esc(a.name)+' · '+esc(label),agTot)}</div>
   <div class="card"><h2>כמה נשאר לנחמי · ${esc(label)}</h2>
     <div class="vatbox profit">
-      <div><span>פרסומים שהוזמנו בתקופה (לפני מע״מ)</span><b class="money">${ILS(net)}</b></div>
+      <div><span>פרסומים בתקופה (לפני מע״מ)</span><b class="money">${ILS(net)}</b></div>
+      ${bx?`<div><span>ברטר בנוסף לתשלום</span><b class="money ok">+${ILS(bx)}</b></div>`:''}
       <div><span>${esc(a.name)} – רנטה ועמלות</span><b class="money bad">−${ILS(agTot)}</b></div>
       ${idle?`<div><span><small>מתוכם רנטה בחודשים בלי פרסומים דרכה</small></span><b class="money" style="font-weight:400">${ILS(idle)}</b></div>`:''}
       <div><span>הוצאות על פרסומים</span><b class="money bad">−${ILS(exp)}</b></div>
       <div class="tot"><span>נשאר לנחמי</span><b class="money">${ILS(left)}</b></div></div>
-    <div class="meta-s">החישוב לפי תאריך ההזמנה, גם אם עוד לא שולם</div></div>`;
+    <div class="meta-s">לפי תאריך ההזמנה (בלקוח חודשי – לפי כל חודש), גם אם עוד לא שולם</div></div>`;
 }
 function openAgentSettings(){
   const a=agentCfg();
@@ -796,7 +842,7 @@ function restore(inp){const f=inp.files[0];if(!f)return;const r=new FileReader()
 function clearDemo(){confirmBox('למחוק את כל לקוחות והזמנות הדוגמה?',()=>{state.orders.filter(o=>String(o.id).startsWith('demo_')).forEach(o=>delDoc('orders',o.id));state.customers.filter(c=>String(c.id).startsWith('demo_')).forEach(c=>delDoc('customers',c.id));toast('נתוני הדוגמה נמחקו')})}
 const TITLES={sum:'סיכום הכנסות ומע״מ',customers:'ניהול לקוחות',pending:'פרסומים שממתינים לעלות',debts:'לקוחות חייבים',all:'כל ההזמנות'};
 function render(fromSync){
-  const pend=state.orders.filter(o=>!o.publishedDate).length,debt=state.customers.filter(c=>custStats(c.id).debt>0).length;
+  const pend=state.orders.reduce((t,o)=>t+pendingAds(o),0),debt=state.customers.filter(c=>custStats(c.id).debt>0).length;
   $('#bPend').hidden=!pend;$('#bPend').textContent=pend;$('#bDebt').hidden=!debt;$('#bDebt').textContent=debt;
   // keep focus while typing in search
   const act=document.activeElement&&document.activeElement.id,pos=act&&document.activeElement.selectionStart;
