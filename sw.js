@@ -1,5 +1,5 @@
 // customers app: newest page from the server, saved copy if offline or slow (6s)
-const C='nechami-lakochot-v8';
+const C='nechami-lakochot-v9';
 self.addEventListener('install',()=>self.skipWaiting());
 self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const k of await caches.keys())if(k.startsWith('nechami-lakochot-')&&k!==C)await caches.delete(k);await self.clients.claim()})()));
 self.addEventListener('fetch',e=>{

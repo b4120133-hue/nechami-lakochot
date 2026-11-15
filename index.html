@@ -229,6 +229,8 @@ background:radial-gradient(circle at 0% 0%,rgba(243,220,146,.25),transparent 50%
 .dc-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 2px;border-bottom:1px dashed #efe5cf;cursor:pointer}
 .dc-row span{font-size:14px}.dc-row small{display:block;color:var(--muted);font-size:12px}
 .docs-card{border-color:#efc4bd}
+.barter-note{margin-top:8px;background:#e8f1fb;border:1px solid #b9d1ee;color:#1f4f8a;border-radius:12px;padding:9px 12px;font-size:13px;font-weight:700}
+.barter-box{border-color:#b9d1ee}
 </style>
 </head>
 <body>
@@ -516,12 +518,20 @@ function openBarterUse(cid,i,j){
     const arr=[...c.barters];arr[i]={...b,uses};saveDoc('customers',{...c,barters:arr});closeSheet();toast('נשמר ✓')};
   if(j!=null)$('#uDel').onclick=()=>{const uses=[...b.uses];uses.splice(j,1);const arr=[...c.barters];arr[i]={...b,uses};saveDoc('customers',{...c,barters:arr});closeSheet();toast('נמחק')};
 }
+function barterRows(){
+  const rows=[];
+  state.orders.filter(hasBarter).forEach(o=>{const c=custById(o.customerId);if(!c)return;const mon=otype(o)==='monthly';const acc=barterTotal(o),used=(o.barter.uses||[]).reduce((t,u)=>t+(+u.amount||0),0);
+    rows.push({c,o,desc:o.barter.desc||'ברטר',sub:mon?ILS(o.barter.value)+' בחודש · '+brN(o)+' חודשים':(o.barter.got?'התקבל'+(o.barter.gotDate?' '+fd(o.barter.gotDate):''):'עוד לא התקבל'),acc,used,bal:r2(acc-used),mon})});
+  state.customers.forEach(c=>(c.barters||[]).forEach(b=>{const st=brStat(b);rows.push({c,desc:b.desc||'ברטר',sub:ILS(b.monthly)+' בחודש',acc:st.acc,used:st.used,bal:st.bal,mon:true})}));
+  return rows;
+}
 function barterSummaryHtml(){
-  const rows=[];state.customers.forEach(c=>(c.barters||[]).forEach(b=>rows.push({c,b,st:brStat(b)})));
-  state.orders.filter(o=>otype(o)==='monthly'&&hasBarter(o)).forEach(o=>{const c=custById(o.customerId);if(!c)return;const acc=barterTotal(o),used=(o.barter.uses||[]).reduce((t,u)=>t+(+u.amount||0),0);rows.push({c,b:{desc:o.barter.desc,monthly:o.barter.value},st:{bal:r2(acc-used)}})});
-  if(!rows.length)return'';
-  const tot=rows.reduce((t,r)=>t+r.st.bal,0);
-  return `<div class="card"><h2>⇄ יתרות ברטר מצטבר</h2><ul class="list">${rows.sort((a,b)=>b.st.bal-a.st.bal).map(r=>`<li onclick="go('customer','${r.c.id}')"><span class="num">${esc(r.c.num)}</span><div class="t"><b>${esc(r.c.name)}</b><small>${esc(r.b.desc||'')} · ${ILS(r.b.monthly)} בחודש</small></div><div class="end money ok">${ILS(r.st.bal)}</div></li>`).join('')}</ul>${leftBar('סה״כ זכויות ברטר כרגע',tot)}</div>`;
+  const rows=barterRows();if(!rows.length)return'';
+  const tot=rows.reduce((t,r)=>t+r.bal,0),acc=rows.reduce((t,r)=>t+r.acc,0),used=rows.reduce((t,r)=>t+r.used,0);
+  return `<div class="card barter-box"><h2>⇄ קופת ברטר</h2>
+  <div class="meta-s" style="margin-top:0">הברטר לא נספר בהכנסות ולא ב"נשאר לנחמי" – הוא נשמר כאן בנפרד</div>
+  <div class="vatbox"><div><span>שווי כל הברטר עד היום</span><b class="money">${ILS(acc)}</b></div>${used?`<div><span>נוצל</span><b class="money bad">−${ILS(used)}</b></div>`:''}<div class="tot"><span>יתרה בקופת הברטר</span><b class="money">${ILS(tot)}</b></div></div>
+  <ul class="list" style="margin-top:8px">${rows.sort((a,b)=>b.bal-a.bal).map(r=>`<li onclick="${r.o?`openOrder('${r.o.id}')`:`go('customer','${r.c.id}')`}"><span class="num">${esc(r.c.num)}</span><div class="t"><b>${esc(r.c.name)} · ${esc(r.desc)}</b><small>${r.sub}${r.used?' · נוצל '+ILS(r.used):''}</small></div><div class="end money ok">${ILS(r.bal)}</div></li>`).join('')}</ul></div>`;
 }
 /* ===== payment documents ===== */
 const DOCK={demand:'דרישת תשלום',invoice:'חשבונית מס',invrec:'חשבונית מס קבלה',receipt:'קבלה'};
@@ -541,6 +551,8 @@ function docNeeds(o){
 function docPill(o){if(!CH[o.channel])return['p-mut','לא נבחר עסק'];if(o.channel==='cash')return['p-mut','מזומן – בלי מסמך'];const n=docNeeds(o);if(n.length)return['p-bad','צריך להוציא '+(n[0].need==='tax'?(o.channel==='murshe'?'חשבונית':'קבלה'):'מסמך')];
   const any=chargeList(o).some(c=>docsFor(o,c.key).length);if(any)return['p-ok','מסמך הוצא'];return['p-mut',timingOf(o)==='now'?'מסמך לפני תשלום':'מסמך אחרי תשלום']}
 function oldestUnpaid(o){const c=chargeList(o).find(x=>!x.full&&x.due>0);return c?(c.date||o.orderDate):''}
+const cashRatio=o=>{const d=dueOf(o);return d>0?Math.max(0,Math.min(1,cashDue(o)/d)):1};
+const cashNet=o=>money(o).net*cashRatio(o);
 /* ===== agent & profit ===== */
 const AG_DEF={id:'agent',name:'הסוכנת',low:5000,high:8000,threshold:20000,pct:15,start:today().slice(0,7)};
 function agentCfg(){return Object.assign({},AG_DEF,state.settings.find(x=>x.id==='agent')||{})}
@@ -548,17 +560,17 @@ const monthOf=o=>(o.orderDate||'').slice(0,7);
 const expOf=o=>(o.expenses||[]).reduce((t,e)=>t+(+e.amount||0),0);
 function agentMonth(m,orders){ // orders = all orders (optionally with one replaced while editing)
   const a=agentCfg();const os=[];(orders||state.orders).forEach(o=>{if(o.viaAgent)chargesOf(o).forEach(c=>{if(c.m===m)os.push(o)})});
-  const base=os.reduce((t,o)=>t+money(o).net,0);
+  const base=os.reduce((t,o)=>t+cashNet(o),0);
   const active=m>=a.start;
   const retainer=active?(base>a.threshold?a.high:a.low):0;
-  const commission=os.reduce((t,o)=>t+money(o).net*a.pct/100,0);
+  const commission=os.reduce((t,o)=>t+cashNet(o)*a.pct/100,0);
   return{m,os,base,retainer,commission:r2(commission),total:r2(retainer+commission),high:base>a.threshold};
 }
 function profitOf(o,orders){
-  const a=agentCfg(),one=money(o).net,ch=chargesOf(o),net=r2(one*ch.length),exp=expOf(o),bx=hasBarter(o)&&o.barter.mode==='extra'?barterTotal(o):0;
+  const a=agentCfg(),one=cashNet(o),ch=chargesOf(o),net=r2(one*ch.length),exp=expOf(o),bx=0,bt=barterTotal(o);
   let com=0,share=0,am=null;
   if(o.viaAgent){com=r2(net*a.pct/100);ch.forEach(c=>{const x=agentMonth(c.m,orders);am=x;if(x.base)share+=x.retainer*one/x.base});share=r2(share)}
-  return{net,bx,com,share,exp,left:r2(net+bx-com-share-exp),am,n:ch.length};
+  return{net,bx,bt,com,share,exp,left:r2(net-com-share-exp),am,n:ch.length};
 }
 const leftOf=o=>profitOf(o).left;
 function leftBar(label,amount,sub){return `<div class="leftbar"><div><span>${label}</span>${sub?`<small>${sub}</small>`:''}</div><b class="money">${ILS(amount)}</b></div>`}
@@ -703,12 +715,13 @@ function profitHtml(o){
   const others=state.orders.filter(x=>x.id!==o.id).concat([o]);
   const p=profitOf(o,others),a=agentCfg();
   return `<div class="vatbox profit">
-    <div><span>${otype(o)==='monthly'?'סכום עד היום ('+p.n+' חודשים)':'סכום הפרסום'}${o.channel==='murshe'?' (לפני מע״מ)':''}</span><b class="money">${ILS(p.net)}</b></div>
+    <div><span>${otype(o)==='monthly'?'כסף עד היום ('+p.n+' חודשים)':'כסף מהפרסום'}${o.channel==='murshe'?' (לפני מע״מ)':''}</span><b class="money">${ILS(p.net)}</b></div>
     ${o.viaAgent?`<div><span>עמלת ${esc(a.name)} ${a.pct}%</span><b class="money bad">−${ILS(p.com)}</b></div>
     <div><span>חלק מהרנטה החודשית<small>${p.am&&p.am.base?`${ILS(p.am.retainer)} בחודש ${p.am.m.split('-').reverse().join('/')} · מתחלק לפי ${p.am.os.length} פרסומים של ${ILS(p.am.base)}`:''}${p.am&&p.am.retainer===0?' · לפני תחילת העבודה עם הסוכנת':''}</small></span><b class="money bad">−${ILS(p.share)}</b></div>`:''}
-    ${p.bx?`<div><span>ברטר בנוסף לתשלום</span><b class="money ok">+${ILS(p.bx)}</b></div>`:''}
+
     ${p.exp?`<div><span>הוצאות</span><b class="money bad">−${ILS(p.exp)}</b></div>`:''}
     <div class="tot"><span>נשאר לנחמי</span><b class="money">${ILS(p.left)}</b></div></div>
+    ${p.bt?`<div class="barter-note">⇄ ברטר בשווי ${ILS(p.bt)} – נכנס לקופת הברטר, לא נספר כאן</div>`:''}
     ${o.viaAgent?'<div class="meta-s">החלק מהרנטה מתעדכן לבד כשנוספות עוד הזמנות של הסוכנת באותו חודש</div>':''}`;
 }
 function refreshProfit(){if(!editing||!$('#profitBox'))return;collectOrder();$('#profitBox').innerHTML=profitHtml(editing)}
@@ -873,7 +886,7 @@ function agentProfitHtml(from,to,label){
   const months=monthsBetween(from,to).filter(m=>m<=cur);
   const am=months.map(m=>agentMonth(m));
   let net=0,exp=0,bx=0;
-  state.orders.forEach(o=>{const one=money(o).net,bv=hasBarter(o)&&o.barter.mode==='extra'?(+o.barter.value||0):0;chargesOf(o).forEach(c=>{if(c.date&&c.date>=from&&c.date<=to){net+=one;bx+=bv}});(o.expenses||[]).forEach(e=>{const d=e.date||o.orderDate||'';if(d>=from&&d<=to)exp+=(+e.amount||0)})});
+  state.orders.forEach(o=>{const one=cashNet(o),bv=0;chargesOf(o).forEach(c=>{if(c.date&&c.date>=from&&c.date<=to){net+=one;bx+=bv}});(o.expenses||[]).forEach(e=>{const d=e.date||o.orderDate||'';if(d>=from&&d<=to)exp+=(+e.amount||0)})});
   net=r2(net);exp=r2(exp);
   const agTot=am.reduce((t,x)=>t+x.total,0);
   const idle=am.filter(x=>x.retainer&&!x.os.length).reduce((t,x)=>t+x.retainer,0);
@@ -884,8 +897,7 @@ function agentProfitHtml(from,to,label){
     ${leftBar('סה״כ מגיע ל'+esc(a.name)+' · '+esc(label),agTot)}</div>
   <div class="card"><h2>כמה נשאר לנחמי · ${esc(label)}</h2>
     <div class="vatbox profit">
-      <div><span>פרסומים בתקופה (לפני מע״מ)</span><b class="money">${ILS(net)}</b></div>
-      ${bx?`<div><span>ברטר בנוסף לתשלום</span><b class="money ok">+${ILS(bx)}</b></div>`:''}
+      <div><span>כסף מפרסומים בתקופה (לפני מע״מ, בלי ברטר)</span><b class="money">${ILS(net)}</b></div>
       <div><span>${esc(a.name)} – רנטה ועמלות</span><b class="money bad">−${ILS(agTot)}</b></div>
       ${idle?`<div><span><small>מתוכם רנטה בחודשים בלי פרסומים דרכה</small></span><b class="money" style="font-weight:400">${ILS(idle)}</b></div>`:''}
       <div><span>הוצאות על פרסומים</span><b class="money bad">−${ILS(exp)}</b></div>
@@ -919,7 +931,8 @@ function vSum(){
   const M3=[['month','חודש'],['bi','דו־חודשי (מע״מ)'],['year','שנה']];
   return `<div class="seg">${M3.map(([k,l])=>`<button class="${k===sumMode?'on':''}" onclick="sumMode='${k}';render()">${l}</button>`).join('')}</div>
   <label>בחירת תקופה</label><input type="month" id="sumMonth" value="${sumMonth}">
-  <div class="kpis"><div class="kpi" style="grid-column:1/-1"><div class="l">סה״כ התקבל · ${esc(label)}</div><div class="v" style="font-size:32px">${M(total)}</div></div></div>
+  <div class="kpis"><div class="kpi" style="grid-column:1/-1"><div class="l">סה״כ התקבל בכסף · ${esc(label)}</div><div class="v" style="font-size:32px">${M(total)}</div></div></div>
+  ${barterSummaryHtml()}
 
   <div class="card chcard ch-m-b"><h2><span><span class="pill ch-m">עוסק מורשה</span></span><span class="money">${ILS(per.murshe.got)}</span></h2>
     <div class="vatbox"><div><span>התקבל לפני מע״מ</span><b class="money">${ILS(per.murshe.net)}</b></div><div class="tot"><span>מע״מ מתוך התשלומים שהתקבלו</span><b class="money">${ILS(per.murshe.vat)}</b></div></div>
@@ -939,7 +952,6 @@ function vSum(){
 
   <div class="card"><h2>כל התשלומים בתקופה <span class="pill p-brand">${rows.length}</span></h2>${rows.length?`<div class="tbl-wrap"><table style="min-width:520px"><tr><th>תאריך</th><th>לקוח</th><th>עסק</th><th>סכום</th><th>מע״מ</th><th>אמצעי</th></tr>${rows.map(({p,o})=>{const c=custById(o.customerId)||{};const mo=money(o);const v=mo.due?r2((+p.amount||0)*mo.vat/mo.due):0;return`<tr class="click" onclick="openOrder('${o.id}')"><td>${fd(p.date)}</td><td>${esc(c.num)} · ${esc(c.name||'')}</td><td>${chPill(o)}</td><td>${M(p.amount)}</td><td>${v?M(v):'—'}</td><td>${esc(p.method||'')}</td></tr>`}).join('')}</table></div>`:'<div class="empty">אין תשלומים בתקופה הזו</div>'}</div>
   ${agentProfitHtml(from,to,label)}
-  ${barterSummaryHtml()}
   <div class="card"><h2>גיבוי הנתונים</h2>
     <div class="meta-s" style="margin-top:0">${mode==='cloud'?'הנתונים נשמרים ב־Google Drive ומשותפים לכל מי שנכנס עם הקוד. אפשר גם לשמור עותק לקובץ.':'הנתונים שמורים בטלפון הזה. מומלץ לגבות פעם בשבוע ולשמור את הקובץ בוואטסאפ לעצמך או ב־Drive.'}</div>
     <button class="btn" onclick="backup()">שמירת גיבוי לקובץ</button>
