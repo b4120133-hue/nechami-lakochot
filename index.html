@@ -231,6 +231,11 @@ background:radial-gradient(circle at 0% 0%,rgba(243,220,146,.25),transparent 50%
 .docs-card{border-color:#efc4bd}
 .barter-note{margin-top:8px;background:#e8f1fb;border:1px solid #b9d1ee;color:#1f4f8a;border-radius:12px;padding:9px 12px;font-size:13px;font-weight:700}
 .barter-box{border-color:#b9d1ee}
+.range{background:#fff;border:1px solid var(--goldline);border-radius:16px;padding:4px 12px 12px;margin-top:6px}
+table.rep td:first-child{white-space:normal;font-weight:600;min-width:120px}
+table.rep tr.tot td{font-family:var(--fh);font-size:17px;font-weight:900;color:var(--p6);background:#f6f0ff;border-top:2px solid var(--gold)}
+table.rep tr.br td{color:#1f4f8a;background:#f2f7fd}
+table.rep td.bad{color:var(--bad)}
 </style>
 </head>
 <body>
@@ -249,7 +254,7 @@ background:radial-gradient(circle at 0% 0%,rgba(243,220,146,.25),transparent 50%
   <button data-v="pending"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>לפרסום<span class="badge" id="bPend" hidden></span></button>
   <button class="on" data-v="debts"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.6-1-1.7-1.5-3-1.5-1.7 0-3 .9-3 2.2 0 3 6 1.6 6 4.6 0 1.3-1.3 2.2-3 2.2-1.4 0-2.5-.6-3.1-1.6M12 6v2M12 16v2"/></svg>חייבים<span class="badge" id="bDebt" hidden></span></button>
   <button data-v="all"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>הזמנות</button>
-  <button data-v="sum"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>סיכום ומע״מ</button>
+  <button data-v="sum"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>דוחות</button>
 </nav>
 <div class="sheet-bg" id="sheetBg"><div class="sheet" id="sheet"></div></div>
 <div class="viewer" id="viewer" onclick="this.classList.remove('show')"><img id="viewerImg" alt=""></div>
@@ -914,6 +919,66 @@ function openAgentSettings(){
   <button class="btn" id="agSave">שמירה</button>`);
   $('#agSave').onclick=()=>{saveDoc('settings',{...a,id:'agent',name:$('#agN').value.trim()||'הסוכנת',low:+$('#agL').value||0,high:+$('#agH').value||0,threshold:+$('#agT').value||0,pct:+$('#agP').value||0,start:$('#agS').value||a.start});closeSheet();toast('נשמר ✓')};
 }
+/* ===== reports: Nechami / agent / VAT ===== */
+let repTab='nechami',rFrom=curM()+'-01',rTo=(()=>{const d=new Date();return ymd(new Date(d.getFullYear(),d.getMonth()+1,0))})();
+function setRange(k){const d=new Date(),y=d.getFullYear(),m=d.getMonth();
+  if(k==='this'){rFrom=ymd(new Date(y,m,1));rTo=ymd(new Date(y,m+1,0))}
+  if(k==='last'){rFrom=ymd(new Date(y,m-1,1));rTo=ymd(new Date(y,m,0))}
+  if(k==='year'){rFrom=y+'-01-01';rTo=y+'-12-31'}
+  render()}
+function rangeHtml(){return `<div class="range"><div class="row"><div><label>מתאריך</label><input type="date" id="rFrom" value="${rFrom}"></div><div><label>עד תאריך</label><input type="date" id="rTo" value="${rTo}"></div></div>
+  <div class="chips" style="margin-top:8px"><button class="chip" onclick="setRange('this')">החודש</button><button class="chip" onclick="setRange('last')">חודש שעבר</button><button class="chip" onclick="setRange('year')">השנה</button></div></div>`}
+function inR(d){return d&&d>=rFrom&&d<=rTo}
+function rangeData(){
+  const a=agentCfg(),cur=today();const rows=[];
+  state.orders.forEach(o=>{const one=cashNet(o);chargesOf(o).forEach(c=>{if(!inR(c.date))return;let com=0,share=0;
+    if(o.viaAgent){const x=agentMonth(c.m);com=r2(one*a.pct/100);share=x.base?r2(x.retainer*one/x.base):0}
+    rows.push({o,c,cash:r2(one),agent:!!o.viaAgent,com,share})})});
+  // retainer in months with no agent deals at all (still paid, fixed)
+  let idle=0;const idleM=[];monthsBetween(rFrom,rTo).forEach(m=>{if(m>cur.slice(0,7)||m<a.start)return;const x=agentMonth(m);if(!x.os.length&&x.retainer){idle+=x.retainer;idleM.push(m)}});
+  const exp={n:0,a:0},got={n:0,a:0},br={n:0,a:0};
+  state.orders.forEach(o=>{const k=o.viaAgent?'a':'n';
+    (o.expenses||[]).forEach(e=>{if(inR(e.date||o.orderDate))exp[k]+=(+e.amount||0)});
+    (o.payments||[]).forEach(p=>{if(inR(p.date))got[k]+=(+p.amount||0)});
+    if(hasBarter(o)){if(otype(o)==='monthly'){const st=(o.barter.start||startOf(o));for(let i=0;i<brN(o);i++){if(inR(addMonths(st,i)))br[k]+=(+o.barter.value||0)}}else if(inR(o.orderDate))br[k]+=(+o.barter.value||0)}});
+  const sum=(f,flt)=>r2(rows.filter(flt).reduce((t,r)=>t+r[f],0));
+  const cashN=sum('cash',r=>!r.agent),cashA=sum('cash',r=>r.agent),com=sum('com',r=>r.agent),share=r2(sum('share',r=>r.agent)+idle);
+  return{rows,a,idle,idleM,exp,got,br,cashN,cashA,com,share,leftN:r2(cashN-exp.n),leftA:r2(cashA-com-share-exp.a)};
+}
+function vNechami(){
+  const d=rangeData(),T=(x,y)=>r2(x+y),cell=v=>v?M(v):'—';
+  const leftT=T(d.leftN,d.leftA);
+  return `${rangeHtml()}
+  ${leftBar('נשאר לנחמי',leftT,'מ־'+fd(rFrom)+' עד '+fd(rTo)+' · כסף בלבד, אחרי הסוכנת וההוצאות, בלי מע״מ ובלי ברטר')}
+  <div class="kpis"><div class="kpi"><div class="l">כסף שנכנס בפועל</div><div class="v ok">${M(T(d.got.n,d.got.a))}</div></div><div class="kpi"><div class="l">⇄ ברטר (בנפרד)</div><div class="v">${M(T(d.br.n,d.br.a))}</div></div></div>
+  <div class="card"><h2>הדף של נחמי</h2><div class="tbl-wrap"><table class="rep" style="min-width:420px"><tr><th></th><th>בלי סוכנת</th><th>דרך הסוכנת</th><th>סה״כ</th></tr>
+   <tr><td>פרסומים (כסף, לפני מע״מ)</td><td>${cell(d.cashN)}</td><td>${cell(d.cashA)}</td><td>${cell(T(d.cashN,d.cashA))}</td></tr>
+   <tr><td>לסוכנת (עמלה ורנטה)</td><td>—</td><td class="bad">${d.com+d.share?'−'+ILS(r2(d.com+d.share)):'—'}</td><td class="bad">${d.com+d.share?'−'+ILS(r2(d.com+d.share)):'—'}</td></tr>
+   <tr><td>הוצאות</td><td class="bad">${d.exp.n?'−'+ILS(d.exp.n):'—'}</td><td class="bad">${d.exp.a?'−'+ILS(d.exp.a):'—'}</td><td class="bad">${T(d.exp.n,d.exp.a)?'−'+ILS(T(d.exp.n,d.exp.a)):'—'}</td></tr>
+   <tr class="tot"><td>נשאר לנחמי</td><td>${M(d.leftN)}</td><td>${M(d.leftA)}</td><td>${M(leftT)}</td></tr>
+   <tr><td>כסף שנכנס בפועל<div class="meta-s" style="margin-top:0">תשלומים שהתקבלו, כולל מע״מ</div></td><td>${cell(d.got.n)}</td><td>${cell(d.got.a)}</td><td>${cell(T(d.got.n,d.got.a))}</td></tr>
+   <tr class="br"><td>⇄ ברטר<div class="meta-s" style="margin-top:0">בקופה נפרדת, לא נספר</div></td><td>${cell(d.br.n)}</td><td>${cell(d.br.a)}</td><td>${cell(T(d.br.n,d.br.a))}</td></tr>
+  </table></div>${d.idle?`<div class="meta-s">כולל רנטה של ${ILS(d.idle)} לסוכנת על חודשים בלי פרסומים דרכה</div>`:''}</div>
+  <div class="card"><h2>פירוט הפרסומים בתקופה <span class="pill p-brand">${d.rows.length}</span></h2>${d.rows.length?`<div class="tbl-wrap"><table style="min-width:520px"><tr><th>תאריך</th><th>לקוח</th><th>פרסום</th><th>סכום</th><th>לסוכנת</th><th>נשאר*</th></tr>
+   ${d.rows.sort((x,y)=>(x.c.date||'').localeCompare(y.c.date||'')).map(r=>{const c=custById(r.o.customerId)||{};return `<tr class="click" onclick="openOrder('${r.o.id}')"><td>${fd(r.c.date)}</td><td>${esc(c.name||'')}</td><td style="white-space:normal;min-width:100px">${esc(r.o.title||'')}${otype(r.o)==='monthly'?'<div class="meta-s" style="margin-top:0">חודשי</div>':''}</td><td>${M(r.cash)}</td><td>${r.agent?'<span class="bad">−'+ILS(r2(r.com+r.share))+'</span>':'—'}</td><td><b class="money ok">${ILS(r2(r.cash-r.com-r.share))}</b></td></tr>`}).join('')}</table></div><div class="meta-s">* לפני הוצאות. ההוצאות מופיעות בטבלה למעלה.</div>`:'<div class="empty">אין פרסומים בתקופה הזו</div>'}</div>`;
+}
+function vAgent(){
+  const d=rangeData(),a=d.a,ar=d.rows.filter(r=>r.agent);const tot=r2(d.com+d.share);
+  const months=monthsBetween(rFrom,rTo).filter(m=>m<=curM()).map(m=>{const x=agentMonth(m);const rs=ar.filter(r=>r.c.m===m);return{m,x,n:rs.length,com:r2(rs.reduce((t,r)=>t+r.com,0)),share:r2(rs.reduce((t,r)=>t+r.share,0))+(d.idleM.includes(m)?x.retainer:0)}});
+  return `${rangeHtml()}
+  ${leftBar('מגיע ל'+esc(a.name),tot,'מ־'+fd(rFrom)+' עד '+fd(rTo)+' · רנטה ועמלות')}
+  <div class="kpis"><div class="kpi"><div class="l">עמלות ${a.pct}%</div><div class="v">${M(d.com)}</div></div><div class="kpi"><div class="l">רנטה</div><div class="v">${M(d.share)}</div></div></div>
+  <div class="card"><h2>✦ ${esc(a.name)} לפי חודשים <button class="btn sm sec" onclick="openAgentSettings()">הגדרות</button></h2>
+   <div class="meta-s" style="margin-top:0">רנטה ${ILS(a.low)} בחודש, ו־${ILS(a.high)} בחודש שבו הפרסומים דרכה עוברים ${ILS(a.threshold)} · ועוד ${a.pct}% מכל פרסום דרכה · על הכסף בלבד, לפני מע״מ</div>
+   ${months.length?`<div class="tbl-wrap"><table style="min-width:460px"><tr><th>חודש</th><th>פרסומים</th><th>סכום כל החודש</th><th>רנטה</th><th>עמלה</th><th>בתקופה</th></tr>${months.map(x=>`<tr><td>${x.m.split('-').reverse().join('/')}</td><td>${x.n}</td><td>${M(x.x.base)}</td><td>${M(x.x.retainer)}${x.x.high?' <span class="pill p-warn">מעל '+ILS(a.threshold)+'</span>':''}</td><td>${M(x.com)}</td><td><b class="money">${ILS(r2(x.com+x.share))}</b></td></tr>`).join('')}</table></div>`:'<div class="empty">אין נתונים</div>'}</div>
+  <div class="card"><h2>הפרסומים שהגיעו דרכה <span class="pill p-brand">${ar.length}</span></h2>${ar.length?`<div class="tbl-wrap"><table style="min-width:520px"><tr><th>תאריך</th><th>לקוח</th><th>פרסום</th><th>סכום</th><th>${a.pct}%</th><th>רנטה</th><th>סה״כ לה</th></tr>
+   ${ar.sort((x,y)=>(x.c.date||'').localeCompare(y.c.date||'')).map(r=>{const c=custById(r.o.customerId)||{};return `<tr class="click" onclick="openOrder('${r.o.id}')"><td>${fd(r.c.date)}</td><td>${esc(c.name||'')}</td><td style="white-space:normal;min-width:100px">${esc(r.o.title||'')}</td><td>${M(r.cash)}</td><td>${M(r.com)}</td><td>${M(r.share)}</td><td><b class="money">${ILS(r2(r.com+r.share))}</b></td></tr>`}).join('')}</table></div>`:'<div class="empty">אין פרסומים דרכה בתקופה הזו</div>'}
+   ${d.idle?`<div class="meta-s">ועוד רנטה של ${ILS(d.idle)} על ${d.idleM.map(m=>m.split('-').reverse().join('/')).join(', ')} – חודשים בלי פרסומים דרכה</div>`:''}</div>`;
+}
+function vReports(){
+  const T=[['nechami','נחמי'],['agent','הסוכנת'],['vat','מע״מ וקופות']];
+  return `<div class="seg">${T.map(([k,l])=>`<button class="${k===repTab?'on':''}" onclick="repTab='${k}';render()">${l}</button>`).join('')}</div>`+(repTab==='nechami'?vNechami():repTab==='agent'?vAgent():vSum());
+}
 function vSum(){
   const {from,to,label,y}=sumRange();
   const per={murshe:{got:0,net:0,vat:0},patur:{got:0},cash:{got:0},'':{got:0}};
@@ -951,7 +1016,6 @@ function vSum(){
   ${per[''].got?`<div class="banner">${ILS(per[''].got)} התקבלו על הזמנות שלא נבחר להן עסק – כדאי לעדכן אותן</div>`:''}
 
   <div class="card"><h2>כל התשלומים בתקופה <span class="pill p-brand">${rows.length}</span></h2>${rows.length?`<div class="tbl-wrap"><table style="min-width:520px"><tr><th>תאריך</th><th>לקוח</th><th>עסק</th><th>סכום</th><th>מע״מ</th><th>אמצעי</th></tr>${rows.map(({p,o})=>{const c=custById(o.customerId)||{};const mo=money(o);const v=mo.due?r2((+p.amount||0)*mo.vat/mo.due):0;return`<tr class="click" onclick="openOrder('${o.id}')"><td>${fd(p.date)}</td><td>${esc(c.num)} · ${esc(c.name||'')}</td><td>${chPill(o)}</td><td>${M(p.amount)}</td><td>${v?M(v):'—'}</td><td>${esc(p.method||'')}</td></tr>`}).join('')}</table></div>`:'<div class="empty">אין תשלומים בתקופה הזו</div>'}</div>
-  ${agentProfitHtml(from,to,label)}
   <div class="card"><h2>גיבוי הנתונים</h2>
     <div class="meta-s" style="margin-top:0">${mode==='cloud'?'הנתונים נשמרים ב־Google Drive ומשותפים לכל מי שנכנס עם הקוד. אפשר גם לשמור עותק לקובץ.':'הנתונים שמורים בטלפון הזה. מומלץ לגבות פעם בשבוע ולשמור את הקובץ בוואטסאפ לעצמך או ב־Drive.'}</div>
     <button class="btn" onclick="backup()">שמירת גיבוי לקובץ</button>
@@ -974,7 +1038,7 @@ function restore(inp){const f=inp.files[0];if(!f)return;const r=new FileReader()
     toast('הגיבוי שוחזר ✓')});
   $('#yesBtn').textContent='כן, לשחזר'}catch(e){toast('הקובץ לא תקין')}};r.readAsText(f);inp.value=''}
 function clearDemo(){confirmBox('למחוק את כל לקוחות והזמנות הדוגמה?',()=>{state.orders.filter(o=>String(o.id).startsWith('demo_')).forEach(o=>delDoc('orders',o.id));state.customers.filter(c=>String(c.id).startsWith('demo_')).forEach(c=>delDoc('customers',c.id));toast('נתוני הדוגמה נמחקו')})}
-const TITLES={sum:'סיכום הכנסות ומע״מ',customers:'ניהול לקוחות',pending:'פרסומים שממתינים לעלות',debts:'חובות ומסמכים',all:'כל ההזמנות'};
+const TITLES={sum:'דוחות',customers:'ניהול לקוחות',pending:'פרסומים שממתינים לעלות',debts:'חובות ומסמכים',all:'כל ההזמנות'};
 function render(fromSync){
   const pend=state.orders.reduce((t,o)=>t+pendingAds(o),0),debt=state.customers.filter(c=>custStats(c.id).debt>0).length;
   $('#bPend').hidden=!pend;$('#bPend').textContent=pend;$('#bDebt').hidden=!debt;$('#bDebt').textContent=debt;
@@ -983,8 +1047,9 @@ function render(fromSync){
   if(fromSync&&$('#sheetBg').classList.contains('show')){/* don't disturb an open form */}
   $('#backBtn').style.display=tab==='customer'?'block':'none';$('#hdr').classList.toggle('compact',tab==='customer');
   $('#title').textContent=tab==='customer'?'כרטיס לקוח':TITLES[tab];
-  $('#view').innerHTML=tab==='customers'?vCustomers():tab==='customer'?vCustomer():tab==='pending'?vPending():tab==='debts'?vDebts():tab==='sum'?vSum():vAll();
+  $('#view').innerHTML=tab==='customers'?vCustomers():tab==='customer'?vCustomer():tab==='pending'?vPending():tab==='debts'?vDebts():tab==='sum'?vReports():vAll();
   const cq=$('#custQ');if(cq)cq.oninput=e=>{custQ=e.target.value;render()};
+  const rf=$('#rFrom'),rt=$('#rTo');if(rf)rf.onchange=e=>{if(e.target.value){rFrom=e.target.value;render()}};if(rt)rt.onchange=e=>{if(e.target.value){rTo=e.target.value;render()}};
   const sm=$('#sumMonth');if(sm)sm.onchange=e=>{if(e.target.value){sumMonth=e.target.value;render()}};
   const aq=$('#allQ');if(aq)aq.oninput=e=>{allQ=e.target.value;render()};
   if(act&&(act==='custQ'||act==='allQ')&&$('#'+act)){const el=$('#'+act);el.focus();try{el.setSelectionRange(pos,pos)}catch(e){}}
