@@ -205,6 +205,21 @@ background:radial-gradient(circle at 0% 0%,rgba(243,220,146,.25),transparent 50%
 .slot{background:#fff;border:1px solid var(--goldline);border-radius:16px;padding:12px 14px 14px;margin:12px 0;border-right:5px solid #d9b45c}
 .slot.done{border-right-color:var(--ok);background:linear-gradient(180deg,#fff,#f3faf5)}
 .slot .h{display:flex;justify-content:space-between;align-items:center;gap:8px}.slot .h b{font-family:var(--fh);font-size:17px;color:var(--p7)}
+.slots{background:#fff;border:1px solid var(--goldline);border-radius:14px;padding:6px 10px}
+.sl-head,.sl{display:grid;grid-template-columns:18px minmax(0,1fr) minmax(0,1fr) 40px;gap:6px;align-items:center}
+.sl-head{font-size:12px;color:var(--muted);padding:4px 0}
+.sl{padding:8px 0;border-top:1px dashed #eadfc8}
+.sl .n{font-family:var(--fh);font-weight:900;color:var(--p6);text-align:center}
+.sl input[type=date]{padding:8px 4px;font-size:13px;border-radius:10px;min-width:0;width:100%}
+.sl .cam{width:40px;height:40px;border:1px solid var(--goldline);border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;overflow:hidden;background:#fffaf0}
+.sl .cam img{width:100%;height:100%;object-fit:cover}.sl .cam input{display:none}
+.sl .st{grid-column:2/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px;font-weight:700}
+.sl-ok .st span{color:var(--ok)}.sl-late-done .st span{color:var(--warn)}.sl-bad .st span{color:var(--bad)}.sl-warn .st span{color:var(--warn)}.sl-wait .st span,.sl-none .st span{color:var(--muted);font-weight:500}
+.sl-ok{background:linear-gradient(90deg,transparent,#f1faf4)}.sl-bad{background:linear-gradient(90deg,transparent,#fdf0ee)}
+.mini{border:1px solid var(--gold);background:var(--goldg);color:var(--p8);border-radius:999px;padding:4px 10px;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.mini.x{background:#fff;color:var(--muted);border-color:#e3d5b5;font-weight:500}
+.hist-sum{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.stx{font-weight:700;font-size:13px}.stx-ok{color:var(--ok)}.stx-late-done,.stx-warn{color:var(--warn)}.stx-bad{color:var(--bad)}.stx-wait,.stx-none{color:var(--muted);font-weight:500}
 </style>
 </head>
 <body>
@@ -437,6 +452,9 @@ function getSlots(o,m){
   const done=arr.filter(x=>x.doneDate).length;return arr.length>n?arr.filter((x,k)=>k<n||x.doneDate).slice(0,Math.max(n,done)):arr;
 }
 function setSlots(o,m,arr){if(otype(o)==='monthly'){o.mslots={...(o.mslots||{}),[m||curM()]:arr}}else{o.slots=arr;if(otype(o)==='once'){o.plannedDate=arr[0].planned||'';o.publishedDate=arr[0].doneDate||''}}}
+const daysBetween=(a,b)=>Math.round((new Date(b)-new Date(a))/864e5);
+function slotTxt(x){if(x.doneDate){if(x.planned&&x.doneDate>x.planned){const d=daysBetween(x.planned,x.doneDate);return['late-done','עלה באיחור של '+(d===1?'יום':d+' ימים')]}if(x.planned&&x.doneDate<x.planned)return['ok','עלה מוקדם']; return['ok','עלה בזמן']}
+  if(x.planned&&x.planned<today())return['bad','לא עלה – באיחור'];if(x.planned===today())return['warn','צריך לעלות היום'];if(x.planned)return['wait','מתוכנן'];return['none','לא נקבע תאריך']}
 function slotState(x){if(x.doneDate)return['p-ok','עלה '+fd(x.doneDate)];if(x.planned&&x.planned<today())return['p-bad','באיחור · '+fd(x.planned)];if(x.planned===today())return['p-warn','היום'];if(x.planned)return['p-warn','מתוכנן '+fd(x.planned)];return['p-mut','לא נקבע תאריך']}
 const monthlyActive=o=>!(startOf(o).slice(0,7)>curM()||(o.end&&o.end.slice(0,7)<curM()));
 function openSlots(o){if(otype(o)==='monthly'){if(!monthlyActive(o))return[];return getSlots(o,curM()).map((x,k)=>({o,k,x,m:curM()})).filter(r=>!r.x.doneDate)}return getSlots(o).map((x,k)=>({o,k,x})).filter(r=>!r.x.doneDate)}
@@ -525,7 +543,7 @@ let sumMode='bi',sumMonth=today().slice(0,7);
 let tab='customers',prevTab='customers',curCust=null,custQ='',allFilter='all',allQ='';
 $('#nav').addEventListener('click',e=>{const b=e.target.closest('button');if(b)go(b.dataset.v)});
 function go(v,cid){
-  if(v==='customer'){prevTab=tab==='customer'?prevTab:tab;curCust=cid}
+  if(v==='customer'){prevTab=tab==='customer'?prevTab:tab;if(cid!==curCust)histM='all';curCust=cid}
   tab=v;document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===(v==='customer'?prevTab:v)));
   window.scrollTo(0,0);render();
 }
@@ -677,12 +695,19 @@ function slotsHtml(o){
   const t=otype(o),m=t==='monthly'?(o._month||curM()):null,arr=getSlots(o,m);
   const months=t==='monthly'?slotMonths(o):[];
   return `<div class="sec-title">${t==='once'?'מתי עולה הפרסום':'מתי עולים הפרסומים'}</div>
-  ${t==='monthly'?`<label>חודש</label><select id="slotMonth" onchange="setSlotMonth(this.value)">${(months.includes(m)?months:[m,...months]).map(x=>`<option value="${x}"${x===m?' selected':''}>${x.split('-').reverse().join('/')}${x===curM()?' (החודש)':''}</option>`).join('')}</select>`:''}
-  ${arr.map((x,k)=>`<div class="slot${x.doneDate?' done':''}"><div class="h"><b>${t==='once'?'הפרסום':'פרסום '+(k+1)+' מתוך '+arr.length}</b>${pill(slotState(x))}</div>
-    <div class="row"><div><label>מתי אמור לעלות</label><input type="date" id="sp${k}" value="${x.planned||''}"></div><div><label>מתי עלה בפועל</label><input type="date" id="sd${k}" value="${x.doneDate||''}" onchange="rer()"></div></div>
-    <button class="btn sm ${x.doneDate?'danger':'gold'}" type="button" style="margin-top:10px" onclick="toggleSlot(${k})">${x.doneDate?'ביטול – לא עלה':'✓ עלה היום'}</button>
-    <label>צילום מסך שהפרסום עלה (אסמכתא)</label>${imgBox('slot'+k,x.img,'הוספת צילום מסך')}</div>`).join('')}`;
+  ${t==='monthly'?`<select id="slotMonth" onchange="setSlotMonth(this.value)" style="margin-bottom:8px">${(months.includes(m)?months:[m,...months]).map(x=>`<option value="${x}"${x===m?' selected':''}>${x.split('-').reverse().join('/')}${x===curM()?' (החודש)':''}</option>`).join('')}</select>`:''}
+  <div class="slots"><div class="sl-head"><span></span><span>אמור לעלות</span><span>עלה בפועל</span><span></span></div>
+  ${arr.map((x,k)=>{const [cls,txt]=slotTxt(x);const src=x.img?imgSrc(x.img):'';return `<div class="sl sl-${cls}">
+    <span class="n">${k+1}</span>
+    <input type="date" id="sp${k}" value="${x.planned||''}" onchange="collectOrder();rer()">
+    <input type="date" id="sd${k}" value="${x.doneDate||''}" onchange="collectOrder();rer()">
+    <label class="cam" title="צילום מסך">${src?`<img src="${esc(src)}" alt="" onclick="event.preventDefault();showImg('${esc(src)}')">`:'📷'}<input type="file" accept="image/*" onchange="pickSlotImg(this,${k})"></label>
+    <div class="st"><span>${txt}</span>${!x.doneDate?`<button type="button" class="mini" onclick="markSlot(${k},'ontime')">✓ עלה בזמן</button><button type="button" class="mini" onclick="markSlot(${k},'today')">עלה היום</button>`:`<button type="button" class="mini x" onclick="markSlot(${k},'clear')">לא עלה</button>`}${src?`<button type="button" class="mini x" onclick="slotImgClear(${k})">הסרת צילום</button>`:''}</div>
+  </div>`}).join('')}</div>`;
 }
+function markSlot(k,how){collectOrder();const m=otype(editing)==='monthly'?(editing._month||curM()):null;const a=getSlots(editing,m);a[k].doneDate=how==='clear'?'':how==='ontime'?(a[k].planned||today()):today();setSlots(editing,m,a);rer()}
+async function pickSlotImg(inp,k){const f=inp.files[0];if(!f)return;collectOrder();toast('מעלה צילום…');try{const im=await storeImage(f);slotImg(k,im);rer();toast('הצילום נוסף – לא לשכוח לשמור')}catch(e){toast(e.message&&e.message.includes('אינטרנט')?e.message:'העלאת הצילום נכשלה')}}
+function slotImgClear(k){collectOrder();slotImg(k,null);rer()}
 function setSlotMonth(v){collectOrder();editing._month=v;rer()}
 function toggleSlot(k){collectOrder();const m=otype(editing)==='monthly'?(editing._month||curM()):null;const a=getSlots(editing,m);a[k].doneDate=a[k].doneDate?'':today();setSlots(editing,m,a);rer()}
 function rer(){const y=$('#sheet').scrollTop;renderOrderForm();$('#sheet').scrollTop=y}
@@ -720,6 +745,27 @@ function vCustomers(){
   <button class="btn gold" onclick="openCustomerForm()">✦ לקוח חדש</button>
   <div class="card"><h2>${state.customers.length} לקוחות</h2><ul class="list">${cs.length?cs.map(c=>{const s=custStats(c.id);return`<li onclick="go('customer','${c.id}')"><span class="num">${esc(c.num)}</span><div class="t"><b>${esc(c.name)}</b><small>${esc([c.contact,c.phone].filter(Boolean).join(' · '))}</small></div><div class="end">${s.debt>0?`<span class="pill p-bad">חוב ${ILS(s.debt)}</span>`:''}${s.pend?`<div style="margin-top:4px"><span class="pill p-warn">${s.pend} לפרסום</span></div>`:''}${(()=>{const mo=state.orders.filter(o=>o.customerId===c.id&&otype(o)==='monthly'&&hasBarter(o));if(!(c.barters||[]).length&&!mo.length)return'';const v=(c.barters||[]).reduce((t,b)=>t+brStat(b).bal,0)+mo.reduce((t,o)=>t+barterTotal(o)-(o.barter.uses||[]).reduce((a,u)=>a+(+u.amount||0),0),0);return `<div style="margin-top:4px"><span class="pill p-barter">⇄ ${ILS(v)}</span></div>`})()}${state.orders.some(o=>o.customerId===c.id&&otype(o)==='monthly'&&!(o.end&&o.end<today()))?'<div style="margin-top:4px"><span class="pill p-brand">חודשי</span></div>':''}</div></li>`}).join(''):`<div class="empty">${q?'לא נמצא לקוח':'עוד אין לקוחות – הוסיפו את הראשון'}</div>`}</ul></div>`;
 }
+let histM='all';
+function adHistory(cid){
+  const rows=[];
+  state.orders.filter(o=>o.customerId===cid).forEach(o=>{
+    const push=(a,m)=>a.forEach((x,k)=>{if(x.planned||x.doneDate)rows.push({o,x,k,m,n:a.length})});
+    if(otype(o)==='monthly'){const ms=new Set([...Object.keys(o.mslots||{}),...slotMonths(o)]);ms.forEach(m=>push(getSlots(o,m),m))}else push(getSlots(o),null);
+  });
+  rows.sort((a,b)=>((b.x.planned||b.x.doneDate)||'').localeCompare((a.x.planned||a.x.doneDate)||''));
+  return rows;
+}
+function historyCard(c){
+  const all=adHistory(c.id);if(!all.length)return'';
+  const months=[...new Set(all.map(r=>(r.x.planned||r.x.doneDate).slice(0,7)))];
+  const rows=histM==='all'?all:all.filter(r=>(r.x.planned||r.x.doneDate).slice(0,7)===histM);
+  const done=rows.filter(r=>r.x.doneDate),late=done.filter(r=>r.x.planned&&r.x.doneDate>r.x.planned),miss=rows.filter(r=>!r.x.doneDate&&r.x.planned&&r.x.planned<today());
+  return `<div class="card"><h2>📅 מתי עלו הפרסומים</h2>
+  <select onchange="histM=this.value;render()"><option value="all">כל החודשים</option>${months.map(m=>`<option value="${m}"${m===histM?' selected':''}>${m.split('-').reverse().join('/')}</option>`).join('')}</select>
+  <div class="hist-sum"><span class="pill p-ok">${done.length-late.length} עלו בזמן</span>${late.length?`<span class="pill p-warn">${late.length} עלו באיחור</span>`:''}${miss.length?`<span class="pill p-bad">${miss.length} לא עלו</span>`:''}${rows.length-done.length-miss.length?`<span class="pill p-mut">${rows.length-done.length-miss.length} עוד לא הגיע הזמן</span>`:''}</div>
+  <div class="tbl-wrap"><table style="min-width:460px"><tr><th>אמור לעלות</th><th>עלה בפועל</th><th>סטטוס</th><th>הפרסום</th><th>צילום</th></tr>
+  ${rows.map(r=>{const [cls,txt]=slotTxt(r.x);const src=r.x.img?imgSrc(r.x.img):'';return `<tr class="click" onclick="openOrder('${r.o.id}')"><td>${fd(r.x.planned)||'—'}</td><td>${fd(r.x.doneDate)||'—'}</td><td><span class="stx stx-${cls}">${txt}</span></td><td style="white-space:normal;min-width:110px">${esc(r.o.title||'')}${r.n>1?`<div class="meta-s" style="margin-top:2px">פרסום ${r.k+1} מתוך ${r.n}</div>`:''}</td><td>${src?`<img class="thumb" src="${esc(src)}" alt="" onclick="event.stopPropagation();showImg('${esc(src)}')">`:'—'}</td></tr>`}).join('')}</table></div></div>`;
+}
 function vCustomer(){
   const c=custById(curCust);if(!c)return'<div class="empty">הלקוח לא נמצא</div>';
   const s=custStats(c.id);const os=[...s.os].sort((a,b)=>(b.orderDate||'').localeCompare(a.orderDate||''));
@@ -729,8 +775,9 @@ function vCustomer(){
   ${ph||c.email?`<div class="contact">${ph?`<a href="tel:${esc(ph)}">📞 התקשרות</a><a href="${esc(wa)}" target="_blank" rel="noopener">💬 וואטסאפ</a>`:''}${c.email?`<a href="mailto:${esc(c.email)}">✉️ מייל</a>`:''}</div>`:''}</div>
   <div class="kpis"><div class="kpi"><div class="l">סה״כ הזמנות</div><div class="v">${M(s.total)}</div></div>${(()=>{const v=s.os.filter(hasBarter).reduce((t,o)=>t+barterTotal(o)-(o.barter.uses||[]).reduce((a,u)=>a+(+u.amount||0),0),0);return v?`<div class="kpi" style="grid-column:1/-1"><div class="l">⇄ זכות ברטר כרגע</div><div class="v">${M(v)}</div></div>`:''})()}<div class="kpi"><div class="l">חוב פתוח</div><div class="v ${s.debt>0?'bad':'ok'}">${M(s.debt)}</div></div></div>
   <button class="btn gold" onclick="openOrder(null,'${c.id}')">✦ הזמנת פרסום חדשה</button>
-  <div class="card"><h2>הזמנות (${os.length})</h2>${os.length?`<div class="tbl-wrap"><table><tr><th>תאריך</th><th>הפרסום</th><th>סכום</th><th>עולה</th><th>עלה</th><th>תמונה</th><th>עסק</th><th>מסמך</th><th>תשלום</th><th>יתרה</th><th>סוכנת</th><th>הוצאות</th><th>נשאר לנחמי</th></tr>
-  ${os.map(o=>{const bal=balOf(o),pf=profitOf(o);return`<tr class="click" onclick="openOrder('${o.id}')"><td>${fd(o.orderDate)}</td><td style="white-space:normal;min-width:120px">${esc(o.title)}<div class="meta-s" style="margin-top:2px">${esc(typeLabel(o))}</div></td><td>${M(dueOf(o))}</td><td>${o.plannedDate?(!o.publishedDate&&o.plannedDate<today()?`<span class="over">${fd(o.plannedDate)}</span>`:fd(o.plannedDate)):'—'}</td><td>${o.publishedDate?`<span class="ok">✓ ${fd(o.publishedDate)}</span>`:'—'}</td><td>${o.campaignImg&&imgSrc(o.campaignImg)?`<img class="thumb" src="${esc(imgSrc(o.campaignImg))}" alt="">`:'—'}</td><td>${chPill(o)}</td><td>${o.channel==='cash'?'—':(o.invoice&&o.invoice.issued?'✓ '+fd(o.invoice.date):'<span class="bad">לא</span>')}</td><td>${pill(payStatus(o))}</td><td class="${bal>0?'bad':''}">${bal>0?M(bal):'—'}</td><td>${o.viaAgent?'<span class="pill p-agent">✦</span> '+M(pf.com+pf.share):'—'}</td><td>${pf.exp?M(pf.exp):'—'}</td><td><b class="money ok">${ILS(pf.left)}</b></td></tr>`}).join('')}</table></div>`:'<div class="empty">עוד אין הזמנות ללקוח הזה</div>'}</div>
+  <div class="card"><h2>הזמנות (${os.length})</h2>${os.length?`<div class="tbl-wrap"><table><tr><th>תאריך</th><th>הפרסום</th><th>סכום</th><th>פרסומים</th><th>תמונה</th><th>עסק</th><th>מסמך</th><th>תשלום</th><th>יתרה</th><th>סוכנת</th><th>הוצאות</th><th>נשאר לנחמי</th></tr>
+  ${os.map(o=>{const bal=balOf(o),pf=profitOf(o);return`<tr class="click" onclick="openOrder('${o.id}')"><td>${fd(o.orderDate)}</td><td style="white-space:normal;min-width:120px">${esc(o.title)}<div class="meta-s" style="margin-top:2px">${esc(typeLabel(o))}</div></td><td>${M(dueOf(o))}</td><td>${pill(pubStatus(o))}</td><td>${o.campaignImg&&imgSrc(o.campaignImg)?`<img class="thumb" src="${esc(imgSrc(o.campaignImg))}" alt="">`:'—'}</td><td>${chPill(o)}</td><td>${o.channel==='cash'?'—':(o.invoice&&o.invoice.issued?'✓ '+fd(o.invoice.date):'<span class="bad">לא</span>')}</td><td>${pill(payStatus(o))}</td><td class="${bal>0?'bad':''}">${bal>0?M(bal):'—'}</td><td>${o.viaAgent?'<span class="pill p-agent">✦</span> '+M(pf.com+pf.share):'—'}</td><td>${pf.exp?M(pf.exp):'—'}</td><td><b class="money ok">${ILS(pf.left)}</b></td></tr>`}).join('')}</table></div>`:'<div class="empty">עוד אין הזמנות ללקוח הזה</div>'}</div>
+  ${historyCard(c)}
   ${(c.barters||[]).length?barterCard(c):''}
   ${os.length?leftBar('סה״כ נשאר לנחמי מהלקוח',os.reduce((t,o)=>t+leftOf(o),0),'אחרי סוכנת והוצאות, בלי מע״מ'):''}`;
 }
